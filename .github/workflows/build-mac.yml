@@ -1,0 +1,42 @@
+name: build-mac
+
+# 在 GitHub 的 macOS 机器上打包，产物在 Actions 运行页面的 Artifacts 里下载。
+# 使用前提：把「05_应用」目录作为仓库根目录上传（package.json 在这一层）。
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: macos-14
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # GitHub 机器在海外，改用官方源，避免国内镜像拖慢或不通
+      - name: Use official mirrors
+        run: |
+          printf 'electron_mirror=https://github.com/electron/electron/releases/download/\nelectron_builder_binaries_mirror=https://github.com/electron-userland/electron-builder-binaries/releases/download/\n' > .npmrc
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build macOS dmg + zip (x64 + arm64)
+        run: npm run build:mac
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: AIOA-Workbench-mac
+          path: |
+            release/*.dmg
+            release/*.zip
+          if-no-files-found: error

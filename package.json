@@ -1,0 +1,79 @@
+{
+  "name": "aioa-workbench",
+  "version": "1.0.0",
+  "description": "AIOA 协同工作台 — 本地 AI Agent 与文件协同工作流控制台",
+  "main": "main/main.js",
+  "author": "AIOA",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "test": "node test/run-tests.js && node test/agent-test.js",
+    "smoke": "electron . --smoke",
+    "pack": "electron-builder --win --dir",
+    "build": "electron-builder --win portable",
+    "build:mac": "electron-builder --mac dmg zip",
+    "build:mac:arm64": "electron-builder --mac dmg zip --arm64",
+    "build:mac:x64": "electron-builder --mac dmg zip --x64"
+  },
+  "dependencies": {
+    "dompurify": "^3.2.6",
+    "marked": "^12.0.2"
+  },
+  "devDependencies": {
+    "@electron/fuses": "^1.8.0",
+    "electron": "^45.2.1",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.aioa.workbench",
+    "productName": "AIOA Workbench",
+    "asar": true,
+    "afterPack": "./scripts/after-pack.js",
+    "files": [
+      "main/**/*",
+      "renderer/**/*",
+      "assets/icon.png",
+      "assets/icon.ico",
+      "assets/icon.icns",
+      "package.json",
+      "!assets/kit/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "assets/kit",
+        "to": "kit"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.ico",
+      "signExecutable": false
+    },
+    "portable": {
+      "artifactName": "AIOA-Workbench-${version}-portable.exe"
+    },
+    "mac": {
+      "icon": "assets/icon.icns",
+      "category": "public.app-category.developer-tools",
+      "artifactName": "AIOA-Workbench-${version}-mac-${arch}.${ext}",
+      "identity": null,
+      "target": [
+        { "target": "dmg", "arch": ["x64", "arm64"] },
+        { "target": "zip", "arch": ["x64", "arm64"] }
+      ]
+    },
+    "directories": {
+      "output": "release"
+    },
+    "compression": "normal"
+  }
+}

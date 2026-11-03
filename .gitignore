@@ -1,0 +1,9 @@
+# 依赖目录：package-lock.json 已锁定版本，构建时用 npm ci 自动安装
+node_modules/
+
+# 构建产物：Actions 会重新生成
+release/
+dist/
+
+# 日志
+npm-debug.log*
