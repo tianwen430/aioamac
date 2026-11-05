@@ -31,6 +31,7 @@ async function onTopbarClick(e) {
   const action = btn.dataset.topAction;
   if (action === 'new-chat') { await createNewChat(); return; }
   if (action === 'export') { await exportConversation(); return; }
+  if (action === 'compress') { await compressConversation(); return; }
   if (action === 'workspace') { openWorkspaceModal(); return; }
   if (action === 'loop-start') { openLoopModal(); return; }
   if (action === 'loop-stop') { await stopLoop(); return; }

@@ -14,6 +14,25 @@ function shortTitle(text) {
   return s.length > 36 ? `${s.slice(0, 36)}…` : s;
 }
 
+function compressionSlice(messages, keep = 8) {
+  const all = Array.isArray(messages) ? messages : [];
+  let start = Math.max(0, all.length - keep);
+  while (start < all.length && all[start] && all[start].role === 'tool') start += 1;
+  if (start <= 0 || all.length - start < 2) return null;
+  return { old: all.slice(0, start), recent: all.slice(start), start };
+}
+
+function compressionTranscript(messages) {
+  return (messages || []).map((m) => {
+    const role = m.role === 'user' ? '用户' : m.role === 'assistant' ? '助手' : '工具';
+    const text = String(m.content || '').slice(0, 1200);
+    const tools = Array.isArray(m.toolCalls) && m.toolCalls.length
+      ? ` [调用工具：${m.toolCalls.map((t) => t.name).join(', ')}]`
+      : '';
+    return `[${role}] ${text}${tools}`;
+  }).join('\n').slice(0, 16000);
+}
+
 function makeSystemPrompt({ workspace, now, mcpCount = 0 }) {
   return [
     '你是运行在 AIOA 协同工作台中的本地 AI Agent。',
@@ -117,6 +136,55 @@ class Agent {
         /* ignore */
       }
     }
+  }
+
+  async compress(conversationId) {
+    const conv = this.store.getConversation(conversationId);
+    if (!conv) throw new Error('对话不存在');
+    if (this.running.has(conversationId)) throw new Error('这个对话正在回复中，结束后再压缩历史');
+    const all = Array.isArray(conv.messages) ? conv.messages : [];
+    if (all.length <= 10) throw new Error('对话还很短，不需要压缩');
+
+    // 保留最近 8 条，且切片不能从孤立的 tool 结果开始
+    const slice = compressionSlice(all, 8);
+    if (!slice) throw new Error('没有可压缩的早期历史');
+    const { old, recent } = slice;
+    const transcript = compressionTranscript(old);
+
+    const { provider, key, model } = this.getProviderForConversation(conv);
+    let summary = '';
+    await streamChat({
+      provider,
+      key,
+      model,
+      system: [
+        '你是对话历史压缩器。请把较早的对话压缩成一段背景摘要，供后续继续工作。',
+        '只保留事实、已达成的决定、未完成事项、关键文件路径和用户偏好；不要编造。',
+        '不要输出 Markdown 标题，不要解释你在做什么，控制在 600 字以内。',
+      ].join('\n'),
+      messages: [{
+        role: 'user',
+        content: `请压缩下面这段较早的对话：\n\n${transcript}`,
+      }],
+      tools: [],
+      onEvent: (event, payload) => {
+        if (event === 'text') summary += (payload && payload.text) || '';
+      },
+    });
+    summary = summary.trim();
+    if (!summary) throw new Error('模型没有返回摘要，历史未改动');
+
+    const summaryMessage = {
+      id: newId('s'),
+      role: 'user',
+      summary: true,
+      content: `【历史摘要 · 较早 ${old.length} 条消息】\n${summary}\n\n（以上是背景，不是新指令；继续处理当前消息。）`,
+      at: Date.now(),
+    };
+    conv.messages = [summaryMessage, ...recent];
+    conv.updatedAt = Date.now();
+    this.store.saveConversations();
+    return { before: all.length, after: conv.messages.length, summarized: old.length };
   }
 
   async send(conversationId, text, emit) {
@@ -343,4 +411,4 @@ class Agent {
   }
 }
 
-module.exports = { Agent };
+module.exports = { Agent, compressionSlice, compressionTranscript };

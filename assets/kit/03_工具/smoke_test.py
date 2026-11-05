@@ -16,6 +16,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from _workflow_config import load_stations, load_config, entry_folder
+
 PASS, FAIL = "PASS", "FAIL"
 results: list[tuple[str, str, str]] = []
 
@@ -37,19 +39,12 @@ def parse_pointer(root: Path) -> dict:
     return out
 
 
-STATIONS = ["01_总控", "02_实施布置", "03_高级代码", "04_代码员工",
-            "05_Debug", "06_美工", "07_部署", "08_智囊"]
-
-SUB_DIRS = {
-    "01_总控": ["收件箱", "已处理", "发件箱", "来自实施层"],
-    "02_实施布置": ["收件箱", "已处理", "发件箱", "成果接收"],
-    "03_高级代码": ["收件箱", "已处理", "技术决策库"],
-    "04_代码员工": ["收件箱", "已处理", "代码产出"],
-    "05_Debug": ["收件箱", "已处理", "测试报告", "成果移交", "经验库"],
-    "06_美工": ["收件箱", "已处理", "美工产出"],
-    "07_部署": ["收件箱", "已处理", "部署报告"],
-    "08_智囊": ["收件箱", "已处理", "审校库"],
-}
+def station_subdirs(st: dict) -> list[str]:
+    out = []
+    for name in list(st.get("inboxes") or []) + list(st.get("activity") or []):
+        if name not in out:
+            out.append(name)
+    return out
 
 
 def main() -> int:
@@ -58,13 +53,14 @@ def main() -> int:
     args = ap.parse_args()
 
     root = Path(args.root).resolve() if args.root else Path(__file__).resolve().parent.parent
-    print(f"冒烟测试：{root}\n")
+    stations = load_stations(root)
+    config = load_config(root)
+    mode = f"自定义 {len(stations)} 工位" if config else f"标准 {len(stations)} 工位"
+    print(f"冒烟测试：{root}\n模式：{mode}\n")
 
     # 1 控制层文件齐全
     need = ["00_协议总纲.md", "_ACTIVE_PROJECT.md", "file_watcher_mcp.py"]
-    need += [f"{n:02d}_{s}.md" for n, s in [(1, "总控"), (2, "实施布置"), (3, "高级代码"),
-                                            (4, "代码员工"), (5, "Debug"), (6, "美工"),
-                                            (7, "部署"), (8, "智囊")]]
+    need += [st["card"] for st in stations]
     missing = [n for n in need if not (root / n).exists()]
     check("控制层文件齐全", not missing, "缺：" + ", ".join(missing) if missing else f"{len(need)} 个文件")
 
@@ -89,20 +85,22 @@ def main() -> int:
     # 4 项目目录树完整
     if proot and proot.is_dir():
         miss = []
-        for st in STATIONS:
-            for sub in SUB_DIRS[st]:
-                if not (proot / st / sub).is_dir():
-                    miss.append(f"{st}/{sub}")
+        for st in stations:
+            for sub in station_subdirs(st):
+                if not (proot / st["folder"] / sub).is_dir():
+                    miss.append(f"{st['folder']}/{sub}")
         if not (proot / "00_人类总控" / "汇报终端").is_dir():
             miss.append("00_人类总控/汇报终端")
-        check("项目目录树完整", not miss, "缺：" + ", ".join(miss[:6]) if miss else "8 工位 + 汇报终端")
+        check("项目目录树完整", not miss,
+              "缺：" + ", ".join(miss[:6]) if miss else f"{len(stations)} 工位 + 汇报终端")
     else:
         check("项目目录树完整", False, "指针指向的项目根不存在")
 
     # 5 全局开关与版本号
+    entry = entry_folder(root)
     if proot and proot.is_dir():
-        gs = proot / "01_总控" / "发件箱" / "_GLOBAL_STATUS.md"
-        ver = proot / "01_总控" / "发件箱" / "_VERSION.md"
+        gs = proot / entry / "发件箱" / "_GLOBAL_STATUS.md"
+        ver = proot / entry / "发件箱" / "_VERSION.md"
         ok = gs.exists() and "status" in gs.read_text(encoding="utf-8").lower()
         check("全局开关 _GLOBAL_STATUS.md", ok, gs.read_text(encoding="utf-8").strip() if gs.exists() else "不存在")
         check("版本号 _VERSION.md", ver.exists(), ver.read_text(encoding="utf-8").strip() if ver.exists() else "不存在")
@@ -163,7 +161,8 @@ def main() -> int:
     print("-" * (64 + width))
     print(f"{len(results) - failed} 通过 / {failed} 失败")
     if failed == 0:
-        print("\n全绿。可以开窗口了：01 → 02 → 04/05 → 03/06/08 → 07")
+        order = " → ".join(st["id"] for st in stations)
+        print(f"\n全绿。可以开窗口了：{order}")
     else:
         print("\n有失败项，先修再开窗口。")
     return 0 if failed == 0 else 1

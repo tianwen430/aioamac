@@ -20,52 +20,67 @@ const {
   isSubPath,
   truncateMiddle,
 } = require('./util');
+const {
+  loadConfig,
+  configStations,
+  buildProjectTree,
+  buildCustomConfig,
+  generateProtocol,
+  generateRoleCard,
+  generateConfigCard,
+  transform01NoAdvisor,
+  transform02NoTech,
+  transform02NoArt,
+  transform04NoTech,
+  validateConfig,
+} = require('./workflow-config');
+const { validateDutyPackage } = require('./normalize');
 
 const STATIONS = [
   {
-    num: '01', folder: '01_总控', label: '01 总控', card: '01_总控.md',
+    num: '01', folder: '01_总控', label: '01 总经理', card: '01_总控.md',
     short: '唯一人类接口 · 出策划 · 分配版本 · 最终裁决',
     listens: ['收件箱', '来自实施层'], activity: ['已处理', '发件箱'],
     model: '强模型', order: 1,
   },
   {
-    num: '02', folder: '02_实施布置', label: '02 实施布置', card: '02_实施布置.md',
+    num: '02', folder: '02_实施布置', label: '02 总监', card: '02_实施布置.md',
     short: '把策划切成可验收任务单 · 核准成果',
     listens: ['收件箱', '成果接收'], activity: ['已处理', '发件箱'],
     model: '强模型', order: 2,
   },
   {
-    num: '03', folder: '03_高级代码', label: '03 高级代码', card: '03_高级代码.md',
+    num: '03', folder: '03_高级代码', label: '03 部门经理', card: '03_高级代码.md',
     short: '技术裁决 · 判断升级方向 · 不写代码',
     listens: ['收件箱'], activity: ['已处理', '技术决策库'],
     model: '中等', order: 5,
   },
   {
-    num: '04', folder: '04_代码员工', label: '04 代码员工', card: '04_代码员工.md',
+    num: '04', folder: '04_代码员工', label: '04 员工', card: '04_代码员工.md',
     short: '按任务单写代码 · 自测 · 提交测试',
     listens: ['收件箱'], activity: ['已处理', '代码产出'],
     model: '强模型', order: 3,
   },
   {
-    num: '05', folder: '05_Debug', label: '05 Debug', card: '05_Debug.md',
+    num: '05', folder: '05_Debug', label: '05 质检', card: '05_Debug.md',
     short: '跑验收标准 · 自动修复 ≤2 轮 · 沉淀经验',
     listens: ['收件箱'], activity: ['已处理', '测试报告', '成果移交'],
     model: '中等', order: 4,
   },
   {
-    num: '06', folder: '06_美工', label: '06 美工', card: '06_美工.md',
+    num: '06', folder: '06_美工', label: '06 设计', card: '06_美工.md',
     short: '视觉生产 · 效果说明 · 通知代码接入',
     listens: ['收件箱'], activity: ['已处理', '美工产出'],
     model: '看需求', order: 6,
   },
   {
-    num: '07', folder: '07_部署', label: '07 部署', card: '07_部署.md',
+    num: '07', folder: '07_部署', label: '07 运维', card: '07_部署.md',
     short: '只部署总控放行的版本 · 回执或报阻塞',
     listens: ['收件箱'], activity: ['已处理', '部署报告'],
     model: '小模型够用', order: 7,
   },
   {
-    num: '08', folder: '08_智囊', label: '08 智囊', card: '08_智囊.md',
+    num: '08', folder: '08_智囊', label: '08 顾问', card: '08_智囊.md',
     short: '可选 · 独立审校策划稿 · 只挑错不给方案',
     listens: ['收件箱'], activity: ['已处理', '审校库'],
     model: '与总控不同模型', order: 8,
@@ -101,6 +116,25 @@ class Workflow {
     this.kitRoot = kitRoot;
     this.defaultRoot = defaultRoot || this.guessDefaultRoot();
     this.pythonCache = null;
+  }
+
+  configFor(controlRoot) {
+    return loadConfig(controlRoot);
+  }
+
+  stationsFor(controlRoot) {
+    const config = loadConfig(controlRoot);
+    return config ? configStations(config) : STATIONS;
+  }
+
+  stationByNum(controlRoot, num) {
+    return this.stationsFor(controlRoot).find((s) => s.num === String(num)) || null;
+  }
+
+  controlRootForProject(projectRoot) {
+    const parent = path.dirname(path.resolve(projectRoot || ''));
+    if (path.basename(parent) !== 'projects') return '';
+    return path.dirname(parent);
   }
 
   guessDefaultRoot() {
@@ -158,14 +192,18 @@ class Workflow {
     writeTextAtomic(path.join(controlRoot, '_ACTIVE_PROJECT.md'), text);
   }
 
-  ensureProjectTree(projectRoot) {
-    for (const rel of TREE) ensureDir(path.join(projectRoot, rel));
+  ensureProjectTree(projectRoot, controlRoot = '') {
+    const root = controlRoot || this.controlRootForProject(projectRoot);
+    const config = root ? loadConfig(root) : null;
+    const tree = config ? buildProjectTree(config) : TREE;
+    const readyDirs = config ? configStations(config).map((s) => s.folder) : READY_DIRS;
+    for (const rel of tree) ensureDir(path.join(projectRoot, rel));
     ensureDir(path.join(projectRoot, '_locks'));
     const gs = path.join(projectRoot, '01_总控', '发件箱', '_GLOBAL_STATUS.md');
     if (!pathExists(gs)) writeTextAtomic(gs, 'status: ACTIVE\n');
     const ver = path.join(projectRoot, '01_总控', '发件箱', '_VERSION.md');
     if (!pathExists(ver)) writeTextAtomic(ver, 'version: 0\n');
-    for (const dir of READY_DIRS) {
+    for (const dir of readyDirs) {
       const f = path.join(projectRoot, dir, '_READY.md');
       if (!pathExists(f)) writeTextAtomic(f, '# 就绪台账\n');
     }
@@ -233,7 +271,7 @@ class Workflow {
     if (!cleanName) throw new Error('请填写项目名');
     if (/[\\/:*?"<>|]/.test(cleanName)) throw new Error('项目名不能包含 \\ / : * ? " < > |');
     const projectRoot = path.join(root, 'projects', cleanName);
-    this.ensureProjectTree(projectRoot);
+    this.ensureProjectTree(projectRoot, root);
     const profilePath = path.join(projectRoot, '_PROJECT.md');
     if (!pathExists(profilePath)) {
       this.writeProjectProfile(projectRoot, {
@@ -394,23 +432,75 @@ class Workflow {
     return { path: out, config: cfg };
   }
 
-  install({ root: inputRoot, project = 'P001_第一个项目', projectTitle = '', codeRoot = '', deployTarget = '', baseline = '', force = false, onProgress = () => {} }) {
+  install({
+    root: inputRoot, project = 'P001_第一个项目', projectTitle = '', codeRoot = '',
+    deployTarget = '', baseline = '', force = false, customConfig = null, repair = false, onProgress = () => {},
+  }) {
     const root = this.normalizeRoot(inputRoot);
     ensureDir(root);
     onProgress({ step: 'root', text: `准备控制层根目录：${root}` });
 
+    const existingConfig = loadConfig(root);
+    if (customConfig) {
+      validateConfig(customConfig);
+      if (existingConfig && !repair) throw new Error('这个目录已经是一套自定义工作流，不能重复创建');
+      const markerFile = path.join(root, '_AIOA_WORKBENCH.json');
+      if (pathExists(markerFile)) {
+        let old = {};
+        try {
+          old = JSON.parse(readTextSafe(markerFile) || '{}');
+        } catch {
+          old = {};
+        }
+        if (old.mode !== 'custom') throw new Error('这个目录是标准工作流，自定义工作流请换一个根目录');
+      }
+    } else if (existingConfig) {
+      throw new Error('这个目录属于自定义工作流，请从「自定义工作流」入口管理');
+    }
+
     const kit = this.kitRoot;
     const protocolSrc = path.join(kit, '02_协议总纲.md');
     if (!fs.existsSync(protocolSrc)) throw new Error('安装资源缺失：02_协议总纲.md');
-    this.copyTextFile(protocolSrc, path.join(root, '00_协议总纲.md'), root, { force });
-    onProgress({ step: 'protocol', text: '协议总纲已就绪' });
-
     const cardDir = path.join(kit, '02_角色卡');
-    const cards = fs.readdirSync(cardDir).filter((n) => n.endsWith('.md'));
-    for (const name of cards) {
-      this.copyTextFile(path.join(cardDir, name), path.join(root, name), root, { force });
+
+    if (customConfig) {
+      const protocolText = generateProtocol(customConfig, fs.readFileSync(protocolSrc, 'utf8'))
+        .split('{{ROOT}}').join(root);
+      writeTextAtomic(path.join(root, '00_协议总纲.md'), this.adaptPaths(protocolText));
+      onProgress({ step: 'protocol', text: '自定义协议总纲已生成' });
+
+      const stations = configStations(customConfig);
+      for (const st of stations) {
+        const dest = path.join(root, st.card);
+        if (pathExists(dest) && !force) continue;
+        let content = '';
+        if (st.custom) {
+          content = generateRoleCard(st, customConfig);
+        } else {
+          content = fs.readFileSync(path.join(cardDir, st.card), 'utf8');
+          if (st.num === '01' && !customConfig.switches.advisorReview) content = transform01NoAdvisor(content);
+          if (st.num === '02') {
+            if (!customConfig.switches.techReview) content = transform02NoTech(content);
+            content = transform02NoArt(content);
+          }
+          if (st.num === '04' && !customConfig.switches.techReview) content = transform04NoTech(content);
+        }
+        content = content.split('{{ROOT}}').join(root);
+        writeTextAtomic(dest, this.adaptPaths(content));
+      }
+      writeTextAtomic(path.join(root, '_AIOA_WORKFLOW.json'), JSON.stringify(customConfig, null, 2));
+      writeTextAtomic(path.join(root, '01_总控_配置态.md'), generateConfigCard(customConfig));
+      onProgress({ step: 'cards', text: `${stations.length} 张角色卡已生成（自定义拓扑）` });
+    } else {
+      this.copyTextFile(protocolSrc, path.join(root, '00_协议总纲.md'), root, { force });
+      onProgress({ step: 'protocol', text: '协议总纲已就绪' });
+
+      const cards = fs.readdirSync(cardDir).filter((n) => n.endsWith('.md'));
+      for (const name of cards) {
+        this.copyTextFile(path.join(cardDir, name), path.join(root, name), root, { force });
+      }
+      onProgress({ step: 'cards', text: `${cards.length} 张角色卡已就绪` });
     }
-    onProgress({ step: 'cards', text: `${cards.length} 张角色卡已就绪` });
 
     const toolDir = path.join(kit, '03_工具');
     ensureDir(path.join(root, 'tools'));
@@ -455,7 +545,9 @@ class Workflow {
 
     const marker = {
       app: 'AIOA Workbench',
-      version: '1.0.0',
+      version: '2.0.0',
+      mode: customConfig ? 'custom' : 'standard',
+      name: customConfig ? customConfig.name : '标准 8 工位',
       installedAt: new Date().toISOString(),
       root,
     };
@@ -487,9 +579,13 @@ class Workflow {
       mcp: mcp.path,
       python,
       createdProject,
+      custom: customConfig
+        ? { name: customConfig.name, switches: customConfig.switches, stations: configStations(customConfig).length }
+        : null,
       warnings: this.rootWarnings(root),
     };
   }
+
 
   rootWarnings(root) {
     const warnings = [];
@@ -646,6 +742,8 @@ class Workflow {
       python: this.detectPython(),
       mcpConfigPath: root ? path.join(root, '_mcp_config.json') : '',
       appMarker: null,
+      isCustom: false,
+      custom: null,
     };
     if (!root || !pathExists(root)) return result;
     const pointer = this.parsePointer(root);
@@ -671,8 +769,21 @@ class Workflow {
     result.globalStatus = this.readGlobalStatus(pointer.root);
     result.version = this.readVersion(pointer.root);
     result.profile = this.readProjectProfile(pointer.root);
+    const config = loadConfig(root);
+    const stations = config ? configStations(config) : STATIONS;
+    result.isCustom = Boolean(config);
+    result.custom = config
+      ? {
+        name: config.name,
+        switches: config.switches,
+        customRoles: config.customRoles || [],
+        schema: config.schema,
+        entry: config.entry || '01',
+        routes: config.routes || [],
+      }
+      : null;
     const stale = Number(staleMinutes) > 0 ? Number(staleMinutes) : 8;
-    result.stations = STATIONS.map((s) => this.stationState(pointer.root, s, stale));
+    result.stations = stations.map((s) => this.stationState(pointer.root, s, stale));
     result.terminal = this.terminalFiles(pointer.root);
     result.counts.decisions = result.terminal.filter((f) => f.type === 'decision').length;
     result.counts.blockers = result.terminal.filter((f) => f.type === 'blocker').length;
@@ -682,7 +793,7 @@ class Workflow {
     if (result.globalStatus === 'PAUSED') result.warnings.push('全局状态是 PAUSED，所有工位会在下一轮循环开头停下。');
     if (!result.python.found) result.warnings.push('未检测到 Python：MCP 服务不可用，但工作台内置监听可以直接使用。');
     else if (!result.python.hasDeps) result.warnings.push('Python 缺少 mcp / watchdog 依赖：MCP 服务暂不可用，工作台内置监听会自动兜底。');
-    const missingCards = STATIONS.filter((s) => !pathExists(path.join(root, s.card))).map((s) => s.card);
+    const missingCards = stations.filter((s) => !pathExists(path.join(root, s.card))).map((s) => s.card);
     if (missingCards.length) result.warnings.push(`角色卡缺失：${missingCards.join('、')}`);
     return result;
   }
@@ -701,6 +812,54 @@ class Workflow {
       return (readTextSafe(bundled) || '').split('{{ROOT}}').join(controlRoot);
     }
     throw new Error(`角色卡不存在：${station.card}`);
+  }
+
+  /**
+   * 只改自定义角色的「职责契约」层：重新生成该角色卡，配置同步，
+   * 写盘前备份 .bak，卡与配置文件都走原子替换。
+   */
+  updateRoleDuty(controlRoot, code, dutyPackage, { draft } = {}) {
+    const root = this.normalizeRoot(controlRoot);
+    const config = loadConfig(root);
+    if (!config) throw new Error('当前目录不是自定义工作流');
+    const station = (config.stations || []).find((s) => s.id === code && s.custom);
+    if (!station) throw new Error(`找不到自定义角色：${code}`);
+    const pkg = validateDutyPackage(
+      { ...dutyPackage, status: dutyPackage.status || 'manual' },
+      { code, alias: station.alias, type: station.roleType }
+    );
+
+    const role = (config.customRoles || []).find((r) => r.code === code);
+    station.dutyPackage = pkg;
+    station.duty = pkg.name;
+    station.short = pkg.name;
+    if (draft !== undefined) station.draft = String(draft || '').trim();
+    if (role) {
+      role.dutyPackage = pkg;
+      role.dutyName = pkg.name;
+      if (draft !== undefined) role.draft = String(draft || '').trim();
+    }
+    validateConfig(config);
+
+    const cardPath = path.join(root, station.card);
+    const configPath = path.join(root, '_AIOA_WORKFLOW.json');
+    if (pathExists(cardPath)) fs.copyFileSync(cardPath, `${cardPath}.bak`);
+    if (pathExists(configPath)) fs.copyFileSync(configPath, `${configPath}.bak`);
+
+    const view = configStations(config).find((s) => s.id === code);
+    const content = generateRoleCard(view, config).split('{{ROOT}}').join(root);
+    writeTextAtomic(cardPath, this.adaptPaths(content));
+    writeTextAtomic(configPath, JSON.stringify(config, null, 2));
+    writeTextAtomic(path.join(root, '01_总控_配置态.md'), generateConfigCard(config));
+
+    // 协议角色索引也随职责名更新（协议本来就是系统生成的）
+    const protocolSrc = path.join(this.kitRoot, '02_协议总纲.md');
+    if (pathExists(protocolSrc)) {
+      const protocolText = generateProtocol(config, fs.readFileSync(protocolSrc, 'utf8'))
+        .split('{{ROOT}}').join(root);
+      writeTextAtomic(path.join(root, '00_协议总纲.md'), this.adaptPaths(protocolText));
+    }
+    return { cardPath, configPath, dutyPackage: pkg };
   }
 
   appendSystemStatus(projectRoot, line) {
@@ -864,8 +1023,9 @@ class Workflow {
     return sections;
   }
 
-  tidy(projectRoot, { apply = false } = {}) {
+  tidy(projectRoot, { apply = false, controlRoot = '' } = {}) {
     const plan = [];
+    const stations = this.stationsFor(controlRoot || this.controlRootForProject(projectRoot));
     const archiveByMonth = (station) => {
       const dir = path.join(projectRoot, station.folder, '已处理');
       if (!pathExists(dir)) return;
@@ -886,7 +1046,7 @@ class Workflow {
         if (apply) moveFileAtomic(full, dest);
       }
     };
-    for (const s of STATIONS) archiveByMonth(s);
+    for (const s of stations) archiveByMonth(s);
 
     const terminal = path.join(projectRoot, '00_人类总控', '汇报终端');
     if (pathExists(terminal)) {
@@ -900,7 +1060,7 @@ class Workflow {
       }
     }
 
-    for (const s of STATIONS) {
+    for (const s of stations) {
       const base = path.join(projectRoot, s.folder);
       const ready = path.join(base, '_READY.md');
       if (pathExists(ready)) {
@@ -952,8 +1112,9 @@ class Workflow {
       check(false, '控制层根目录存在', root || '未配置');
       return { items, passed: 0, failed: 1, ok: false };
     }
+    const stations = this.stationsFor(root);
     const need = ['00_协议总纲.md', '_ACTIVE_PROJECT.md', 'file_watcher_mcp.py',
-      ...STATIONS.map((s) => s.card)];
+      ...stations.map((s) => s.card)];
     const missing = need.filter((n) => !pathExists(path.join(root, n)));
     check(!missing.length, '控制层文件齐全', missing.length ? `缺：${missing.join('、')}` : `${need.length} 个文件`);
 
@@ -970,13 +1131,13 @@ class Workflow {
       pointer ? `project=${pointer.project || '-'} status=${pointer.status}` : '缺 _ACTIVE_PROJECT.md');
     if (pointer && pointer.valid) {
       const missingDirs = [];
-      for (const s of STATIONS) {
+      for (const s of stations) {
         for (const sub of s.listens) {
           if (!pathExists(path.join(pointer.root, s.folder, sub))) missingDirs.push(`${s.folder}/${sub}`);
         }
       }
       if (!pathExists(path.join(pointer.root, '00_人类总控', '汇报终端'))) missingDirs.push('00_人类总控/汇报终端');
-      check(!missingDirs.length, '项目目录树完整', missingDirs.length ? `缺：${missingDirs.slice(0, 6).join('、')}` : '8 工位 + 汇报终端');
+      check(!missingDirs.length, '项目目录树完整', missingDirs.length ? `缺：${missingDirs.slice(0, 6).join('、')}` : `${stations.length} 工位 + 汇报终端`);
       const gs = path.join(pointer.root, '01_总控', '发件箱', '_GLOBAL_STATUS.md');
       check(pathExists(gs), '全局开关存在', pathExists(gs) ? (readTextSafe(gs) || '').trim() : '不存在');
       const ver = path.join(pointer.root, '01_总控', '发件箱', '_VERSION.md');
@@ -1032,6 +1193,8 @@ class Workflow {
       add(path.join(controlRoot, '01_操作手册'), '操作手册');
       const readme = path.join(controlRoot, '00_从这里开始.md');
       if (pathExists(readme)) docs.unshift({ label: '00_从这里开始.md', path: readme });
+      const configCard = path.join(controlRoot, '01_总控_配置态.md');
+      if (pathExists(configCard)) docs.unshift({ label: '01_总控_配置态.md', path: configCard });
     }
     return docs;
   }

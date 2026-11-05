@@ -1,16 +1,21 @@
 name: build-mac
 
 # 在 GitHub 的 macOS 机器上打包，产物在 Actions 运行页面的 Artifacts 里下载。
-# 使用前提：把「05_应用」目录作为仓库根目录上传（package.json 在这一层）。
+# 使用前提：把「05_应用_v2」目录作为仓库根目录上传（package.json 在这一层）。
+# 不要上传 release/、node_modules/ 或已经解包的 .app。
 on:
   workflow_dispatch:
   push:
     tags:
       - 'v*'
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: macos-14
+    timeout-minutes: 45
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
     steps:
@@ -32,11 +37,35 @@ jobs:
       - name: Build macOS dmg + zip (x64 + arm64)
         run: npm run build:mac
 
-      - name: Upload artifacts
+      - name: List artifacts
+        run: ls -lh release/*.dmg release/*.zip
+
+      - name: Write checksums
+        run: |
+          cd release
+          shasum -a 256 *.dmg *.zip > SHA256SUMS-mac.txt
+          cat SHA256SUMS-mac.txt
+
+      # 分开上传：Apple Silicon 用户只下 arm64，Intel 用户只下 x64，
+      # 避免一个 500MB 的大包让人误以为“单个安装包就这么大”。
+      - name: Upload Apple Silicon (arm64)
         uses: actions/upload-artifact@v4
         with:
-          name: AIOA-Workbench-mac
+          name: AIOA-Workbench-mac-arm64
           path: |
-            release/*.dmg
-            release/*.zip
+            release/*-mac-arm64.dmg
+            release/*-mac-arm64.zip
+            release/SHA256SUMS-mac.txt
           if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload Intel (x64)
+        uses: actions/upload-artifact@v4
+        with:
+          name: AIOA-Workbench-mac-x64
+          path: |
+            release/*-mac-x64.dmg
+            release/*-mac-x64.zip
+            release/SHA256SUMS-mac.txt
+          if-no-files-found: error
+          retention-days: 14

@@ -1,6 +1,6 @@
 {
   "name": "aioa-workbench",
-  "version": "1.0.0",
+  "version": "2.4.1",
   "description": "AIOA 协同工作台 — 本地 AI Agent 与文件协同工作流控制台",
   "main": "main/main.js",
   "author": "AIOA",
@@ -30,6 +30,10 @@
     "appId": "com.aioa.workbench",
     "productName": "AIOA Workbench",
     "asar": true,
+    "electronLanguages": [
+      "zh-CN",
+      "en-US"
+    ],
     "afterPack": "./scripts/after-pack.js",
     "files": [
       "main/**/*",
@@ -67,13 +71,25 @@
       "artifactName": "AIOA-Workbench-${version}-mac-${arch}.${ext}",
       "identity": null,
       "target": [
-        { "target": "dmg", "arch": ["x64", "arm64"] },
-        { "target": "zip", "arch": ["x64", "arm64"] }
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
       ]
     },
     "directories": {
       "output": "release"
     },
-    "compression": "normal"
+    "compression": "maximum"
   }
 }

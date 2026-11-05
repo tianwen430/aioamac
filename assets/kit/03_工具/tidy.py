@@ -17,15 +17,14 @@ from __future__ import annotations
 
 import shutil
 import sys
-import time
 from datetime import datetime
 from pathlib import Path
 
+from _workflow_config import load_stations, entry_folder
+
 CONTROL_ROOT = Path(__file__).resolve().parent.parent
 POINTER = CONTROL_ROOT / "_ACTIVE_PROJECT.md"
-
-STATIONS = ["01_总控", "02_实施布置", "03_高级代码", "04_代码员工",
-            "05_Debug", "06_美工", "07_部署", "08_智囊"]
+STATIONS = load_stations(CONTROL_ROOT)
 
 APPLY = "--apply" in sys.argv
 
@@ -53,13 +52,14 @@ def month_of(p: Path) -> str:
 
 def tidy_done(root: Path) -> None:
     for st in STATIONS:
-        d = root / st / "已处理"
+        folder = st["folder"]
+        d = root / folder / "已处理"
         if not d.is_dir():
             continue
         files = [f for f in d.iterdir() if f.is_file()]
         if not files:
             continue
-        print(f"[{st}] 已处理 {len(files)} 个文件")
+        print(f"[{st['label']}] 已处理 {len(files)} 个文件")
         for f in files:
             move(f, d / month_of(f))
 
@@ -77,17 +77,18 @@ def tidy_terminal(root: Path) -> None:
 
 def roll_ready(root: Path) -> None:
     for st in STATIONS:
-        p = root / st / "_READY.md"
+        folder = st["folder"]
+        p = root / folder / "_READY.md"
         if not p.exists():
             continue
         lines = p.read_text(encoding="utf-8").splitlines()
         if len(lines) <= 50:
             continue
         keep, old = lines[-20:], lines[:-20]
-        arch = root / st / "_archive"
+        arch = root / folder / "_archive"
         arch.mkdir(parents=True, exist_ok=True)
         af = arch / f"READY_{datetime.now():%Y-%m}.md"
-        print(f"[{st}] _READY.md {len(lines)} 行 -> 归档 {len(old)} 行")
+        print(f"[{st['label']}] _READY.md {len(lines)} 行 -> 归档 {len(old)} 行")
         if APPLY:
             with af.open("a", encoding="utf-8") as fh:
                 fh.write("\n".join(old) + "\n")
@@ -96,29 +97,31 @@ def roll_ready(root: Path) -> None:
 
 def trim_heartbeat(root: Path) -> None:
     for st in STATIONS:
-        p = root / st / "_HEARTBEAT.md"
+        folder = st["folder"]
+        p = root / folder / "_HEARTBEAT.md"
         if not p.exists():
             continue
         lines = [l for l in p.read_text(encoding="utf-8").splitlines() if l.strip()]
         if len(lines) <= 5:
             continue
-        print(f"[{st}] _HEARTBEAT.md {len(lines)} 行 -> 保留 5 行")
+        print(f"[{st['label']}] _HEARTBEAT.md {len(lines)} 行 -> 保留 5 行")
         if APPLY:
             p.write_text("\n".join(lines[-5:]) + "\n", encoding="utf-8")
 
 
 def report(root: Path) -> None:
     print("\n目录规模：")
-    for d in [root / "01_总控" / "成果区", root / "00_人类总控" / "汇报终端"]:
+    for d in [root / entry_folder() / "成果区", root / "00_人类总控" / "汇报终端"]:
         if d.is_dir():
             n = sum(1 for _ in d.rglob("*") if _.is_file())
             print(f"  {d.relative_to(root)}: {n} 个文件")
     for st in STATIONS:
-        d = root / st / "已处理"
+        folder = st["folder"]
+        d = root / folder / "已处理"
         if d.is_dir():
             n = sum(1 for f in d.iterdir() if f.is_file())
             if n:
-                print(f"  {st}\\已处理: {n} 个未归档")
+                print(f"  {folder}\\已处理: {n} 个未归档")
 
 
 if __name__ == "__main__":

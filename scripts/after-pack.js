@@ -15,7 +15,8 @@ const { flipFuses, FuseVersion, FuseV1Options } = require('@electron/fuses');
  */
 exports.default = async function afterPack(context) {
   const productName = context.packager.appInfo.productFilename;
-  const exePath = context.electronPlatformName === 'darwin'
+  const isMac = context.electronPlatformName === 'darwin';
+  const exePath = isMac
     ? path.join(context.appOutDir, `${productName}.app`, 'Contents', 'MacOS', productName)
     : path.join(context.appOutDir, `${productName}.exe`);
   await flipFuses(exePath, {
@@ -27,4 +28,17 @@ exports.default = async function afterPack(context) {
     [FuseV1Options.OnlyLoadAppFromAsar]: true,
   });
   console.log(`[afterPack] Electron fuses applied: ${exePath}`);
+
+  // Apple Silicon 要求可执行文件至少有 ad-hoc 签名。identity 为 null 时
+  // electron-builder 会跳过签名，翻转 fuses 后原签名也会失效；这里先做
+  // ad-hoc 签名，保证 dmg/zip 里的 .app 能直接启动。配置了正式证书时，
+  // electron-builder 会在 afterPack 之后用 Developer ID 重新签名。
+  if (isMac) {
+    const { execFileSync } = require('child_process');
+    const appPath = path.join(context.appOutDir, `${productName}.app`);
+    execFileSync('codesign', ['--force', '--deep', '--sign', '-', appPath], {
+      stdio: 'inherit',
+    });
+    console.log(`[afterPack] macOS ad-hoc signed: ${appPath}`);
+  }
 };

@@ -7,11 +7,16 @@ const {
 } = require('electron');
 
 const { Store } = require('./store');
-const { Workflow, STATIONS } = require('./workflow');
-const { publicProviders, fetchModels, getProviderDefinitions } = require('./providers');
+const { Workflow } = require('./workflow');
+const { publicProviders, fetchModels, getProviderDefinitions, streamChat } = require('./providers');
 const { Agent } = require('./agent');
 const { McpManager } = require('./mcp');
 const { WorkflowListener } = require('./listener');
+const {
+  buildCustomConfig, assertCustomSlot, ROLE_TYPE_LABEL,
+  templateFromConfig, validateTemplate,
+} = require('./workflow-config');
+const { normalizeDraft, manualDutyPackage, dutyDiff } = require('./normalize');
 const { isSubPath } = require('./util');
 
 const isDev = process.argv.includes('--dev');
@@ -90,6 +95,21 @@ function workflowState() {
   );
 }
 
+function normalizationModel() {
+  const choice = store.settings.defaultModel;
+  if (!choice || !choice.providerId || !choice.model) {
+    throw new Error('还没有选择模型。请先在对话顶部选一个模型（免费推荐：智谱 GLM-4.7-Flash），再回来规范化。');
+  }
+  const provider = getProviderDefinitions(store.settings).find((p) => p.id === choice.providerId);
+  if (!provider) throw new Error('默认模型的服务已不存在，请到设置里重新选择');
+  if (!provider.baseUrl) throw new Error('默认模型的服务地址为空，请到设置里补全');
+  const key = store.getKey(provider.id);
+  if (provider.requiresKey && !key) {
+    throw new Error(`默认模型 ${provider.name} 还没有 API Key，请先到设置里填写`);
+  }
+  return { provider, key, model: choice.model };
+}
+
 function refreshTheme() {
   const theme = store.settings.theme === 'dark' ? 'dark' : 'light';
   nativeTheme.themeSource = theme;
@@ -166,6 +186,15 @@ function createWindow() {
 }
 
 async function runSmokeTest() {
+  const smokeRoot = app.isPackaged
+    ? path.join(require('os').tmpdir(), 'aioa-smoke-wf-root')
+    : path.join(__dirname, '..', 'test', 'smoke-wf-root');
+  const smokeCustomRoot = app.isPackaged
+    ? path.join(require('os').tmpdir(), 'aioa-smoke-custom-wf-root')
+    : path.join(__dirname, '..', 'test', 'smoke-custom-wf-root');
+  fs.rmSync(smokeRoot, { recursive: true, force: true });
+  fs.rmSync(smokeCustomRoot, { recursive: true, force: true });
+  store.saveSettings({ customWorkflows: [], workflowRoot: smokeRoot, defaultModel: null });
   const errors = [];
   mainWindow.webContents.on('console-message', (event) => {
     if (event.level === 'error') errors.push(event.message);
@@ -188,10 +217,6 @@ async function runSmokeTest() {
         await shot('smoke-workflow.png');
 
         // 通过真实 UI 安装到临时目录，验证完整链路
-        const smokeRoot = app.isPackaged
-          ? path.join(require('os').tmpdir(), 'aioa-smoke-wf-root')
-          : path.join(__dirname, '..', 'test', 'smoke-wf-root');
-        fs.rmSync(smokeRoot, { recursive: true, force: true });
         await mainWindow.webContents.executeJavaScript(`
           (() => {
             const input = document.querySelector('#setupRoot');
@@ -218,6 +243,193 @@ async function runSmokeTest() {
         `);
         await new Promise((r) => setTimeout(r, 700));
         await shot('smoke-workflow-dashboard.png');
+
+        // 自定义工作流向导 + 创建 4 人拓扑（03/08 全关 + A01 角色）
+        const customCheck = await mainWindow.webContents.executeJavaScript(`
+          (async () => {
+            const out = {};
+            S.customWorkflows = await window.api.workflow.listCustom();
+            const btn = document.querySelector('[data-wf="custom-new"]');
+            out.hasNewButton = Boolean(btn);
+            if (btn) btn.click();
+            await new Promise((r) => setTimeout(r, 350));
+            out.hasWizard = Boolean(document.querySelector('#customWfForm'));
+            const rootInput = document.querySelector('#customWfRoot');
+            out.defaultRoot = rootInput ? rootInput.value : '';
+            const advisor = document.querySelector('[name="advisorReview"]');
+            const tech = document.querySelector('[name="techReview"]');
+            out.advisorDefault = Boolean(advisor && advisor.checked);
+            out.techDefault = Boolean(tech && tech.checked);
+            out.roleBlocks = document.querySelectorAll('[name^="roleDraft"]').length;
+            out.defaultRootHasCustom = String(out.defaultRoot).includes('-custom-1');
+            out.hasImportTemplate = Boolean(document.querySelector('[data-wf="import-template"]'));
+
+            const card = document.querySelector('[data-role="1"]');
+            out.hasNormalizeBtn = Boolean(card && card.querySelector('[data-role-normalize="1"]'));
+            const editor = card && card.querySelector('[data-role-editor="1"]');
+            out.dutyEditorHidden = Boolean(editor && editor.hidden);
+            const draftEl = card && card.querySelector('[data-role-draft="1"]');
+            const hiddenDuty = card && card.querySelector('[name="roleDuty1"]');
+            const presetEl = card && card.querySelector('[data-role-preset="1"]');
+            out.hasPreset = Boolean(presetEl);
+            if (presetEl) {
+              presetEl.value = 'docs';
+              presetEl.dispatchEvent(new Event('change', { bubbles: true }));
+              await new Promise((r) => setTimeout(r, 250));
+              out.presetDutyReady = Boolean(hiddenDuty && hiddenDuty.value);
+              out.presetDraftFilled = Boolean(draftEl && draftEl.value.includes('文档索引'));
+            }
+            if (draftEl) {
+              draftEl.value = '维护文档索引与会议纪要';
+              draftEl.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+            if (card) {
+              card.querySelector('[data-role-normalize="1"]').click();
+              await new Promise((r) => setTimeout(r, 700));
+              out.noModelGuide = document.body.textContent.includes('智谱 GLM-4.7-Flash');
+              out.aiNormalizeFailed = (card.querySelector('[data-role-status="1"]').textContent || '').includes('规范化失败');
+              out.aiOpenedEditor = Boolean(editor && !editor.hidden);
+            }
+            card.querySelector('[data-role-manual="1"]').click();
+            const setField = (name, value) => {
+              const el = card.querySelector('[name="' + name + '"]');
+              if (el) el.value = value;
+            };
+            setField('role1Name', '资料运营');
+            setField('role1Summary', '长期维护项目文档索引与会议纪要，确保版本可追溯。');
+            setField('role1Criteria', '每次会议结束后必须新增纪要文件；\\n索引中的链接必须全部可打开。');
+            setField('role1Escalate', '会议结论与项目基线冲突。');
+            setField('role1Forbidden', '不得删除历史版本。');
+            card.querySelector('[data-role-apply="1"]').click();
+            await new Promise((r) => setTimeout(r, 450));
+            out.manualDutyReady = Boolean(hiddenDuty && hiddenDuty.value);
+            out.manualDraftMatched = Boolean(hiddenDuty && hiddenDuty.dataset.draft === '维护文档索引与会议纪要');
+            out.previewVisible = Boolean(card.querySelector('[data-role-preview="1"] .duty-preview'));
+            closeModal();
+
+            const duty = await window.api.workflow.validateDuty({
+              name: '资料运营',
+              summary: '长期维护项目文档索引与会议纪要，确保版本可追溯。',
+              criteria: ['每次会议结束后必须新增纪要文件；', '索引中的链接必须全部可打开。'],
+              escalate: ['会议结论与项目基线冲突。'],
+              forbidden: ['不得删除历史版本。'],
+              code: 'A01',
+              alias: '角色一',
+              type: 'docs',
+              draft: '维护文档索引与会议纪要',
+            });
+            const state = await window.api.workflow.createCustom({
+              name: '冒烟自定义',
+              root: ${JSON.stringify(smokeCustomRoot)},
+              techReview: false,
+              advisorReview: false,
+              customRoles: [{ type: 'docs', draft: '维护文档索引与会议纪要', dutyPackage: duty.dutyPackage }],
+            });
+            S.workflow = state;
+            S.customWorkflows = state.customWorkflows || [];
+            S.settings.workflowRoot = state.root;
+            S.workflowTab = 'overview';
+            renderTopbar();
+            renderWorkflowView();
+            await new Promise((r) => setTimeout(r, 350));
+            out.isCustom = Boolean(state.isCustom);
+            out.stationNums = (state.stations || []).map((s) => s.num);
+            out.stationCount = (state.stations || []).length;
+            out.customRows = document.querySelectorAll('[data-wf="custom-switch"], [data-wf="custom-remove"]').length;
+            out.hasExportTemplate = Boolean(document.querySelector('[data-wf="export-template"]'));
+            out.hasA01Text = document.body.textContent.includes('A01 角色一');
+            out.hasRouteMap = Boolean(document.querySelector('.route-map'));
+            out.routeNodes = document.querySelectorAll('.route-node').length;
+            out.routeHasDisabledNote = document.body.textContent.includes('03 未启用');
+            out.routeHasCustomRole = document.body.textContent.includes('自定义角色');
+            const chip = document.querySelector('[data-wf="edit-duty"][data-code="A01"]');
+            out.hasDutyChip = Boolean(chip);
+            if (chip) {
+              chip.click();
+              await new Promise((r) => setTimeout(r, 400));
+              out.dutyModal = Boolean(document.querySelector('#dutyEditForm'));
+              out.dutySaveDisabled = Boolean(document.querySelector('#dutySaveBtn') && document.querySelector('#dutySaveBtn').disabled);
+              closeModal();
+            }
+            return out;
+          })()
+        `);
+        customCheck.files = {
+          config: fs.existsSync(path.join(smokeCustomRoot, '_AIOA_WORKFLOW.json')),
+          hasA01Card: fs.existsSync(path.join(smokeCustomRoot, 'A01_角色一.md')),
+          no03Card: !fs.existsSync(path.join(smokeCustomRoot, '03_高级代码.md')),
+          no08Card: !fs.existsSync(path.join(smokeCustomRoot, '08_智囊.md')),
+          selfReview: fs.existsSync(path.join(smokeCustomRoot, '01_总控.md'))
+            ? fs.readFileSync(path.join(smokeCustomRoot, '01_总控.md'), 'utf8').includes('自审清单')
+            : false,
+        };
+        try {
+          const smokeConfig = JSON.parse(fs.readFileSync(path.join(smokeCustomRoot, '_AIOA_WORKFLOW.json'), 'utf8'));
+          customCheck.files.dutyInConfig = Boolean(
+            smokeConfig.customRoles && smokeConfig.customRoles[0]
+            && smokeConfig.customRoles[0].dutyPackage
+            && smokeConfig.customRoles[0].dutyPackage.name === '资料运营'
+          );
+          customCheck.files.dutyInCard = fs.readFileSync(path.join(smokeCustomRoot, 'A01_角色一.md'), 'utf8')
+            .includes('每次会议结束后必须新增纪要文件');
+        } catch {
+          customCheck.files.dutyInConfig = false;
+          customCheck.files.dutyInCard = false;
+        }
+        await new Promise((r) => setTimeout(r, 300));
+        await shot('smoke-custom.png');
+
+        const templatePrefill = await mainWindow.webContents.executeJavaScript(`
+          (async () => {
+            const pkg = {
+              name: '资料运营',
+              summary: '长期维护项目文档索引与会议纪要，确保版本可追溯。',
+              criteria: ['每次会议结束后必须新增纪要文件；', '索引中的链接必须全部可打开。'],
+              escalate: ['会议结论与项目基线冲突。'],
+              forbidden: ['不得删除历史版本。'],
+              tools: ['read', 'search', 'write'],
+            };
+            openCustomWorkflowModal({
+              schema: 'aioa-workflow-template/1',
+              name: '模板导入冒烟',
+              switches: { techReview: true, advisorReview: false },
+              customRoles: [{ type: 'docs', draft: '维护文档索引', dutyPackage: pkg }],
+            });
+            await new Promise((r) => setTimeout(r, 350));
+            const out = {
+              title: (document.querySelector('.modal-head h2') || {}).textContent || '',
+              name: (document.querySelector('[name="name"]') || {}).value || '',
+              tech: Boolean(document.querySelector('[name="techReview"]') && document.querySelector('[name="techReview"]').checked),
+              advisor: Boolean(document.querySelector('[name="advisorReview"]') && document.querySelector('[name="advisorReview"]').checked),
+              dutyReady: Boolean(document.querySelector('[name="roleDuty1"]') && document.querySelector('[name="roleDuty1"]').value),
+              preview: Boolean(document.querySelector('[data-role-preview="1"] .duty-preview')),
+              draft: (document.querySelector('[data-role-draft="1"]') || {}).value || '',
+            };
+            closeModal();
+            return out;
+          })()
+        `);
+        customCheck.templatePrefill = templatePrefill;
+
+        const standardSwitch = await mainWindow.webContents.executeJavaScript(`
+          (async () => {
+            const btn = document.querySelector('[data-wf="switch-standard"]');
+            if (!btn) return { ok: false, step: 'button-missing' };
+            btn.click();
+            await new Promise((r) => setTimeout(r, 900));
+            return {
+              ok: !S.workflow.isCustom && (S.workflow.stations || []).length === 8,
+              stations: (S.workflow.stations || []).length,
+              hasCustomRow: Boolean(document.querySelector('[data-wf="custom-switch"]')),
+              hasRouteMap: Boolean(document.querySelector('.route-map')),
+              routeNodes: document.querySelectorAll('.route-node').length,
+              routeNoDisabledNote: !document.body.textContent.includes('03 未启用'),
+            };
+          })()
+        `);
+        customCheck.standardSwitch = standardSwitch;
+        await new Promise((r) => setTimeout(r, 250));
+        await shot('smoke-route.png');
 
         await mainWindow.webContents.executeJavaScript(`
           (() => {
@@ -307,6 +519,7 @@ async function runSmokeTest() {
         );
         result.renameTest = renameTest;
         result.uiCheck = uiCheck;
+        result.customCheck = customCheck;
         result.nav = await mainWindow.webContents.executeJavaScript(
           `Array.from(document.querySelectorAll('.nav-item')).map(b => ({ view: b.dataset.view, active: b.classList.contains('active'), cls: b.className, bg: getComputedStyle(b).backgroundColor, color: getComputedStyle(b).color }))`
         );
@@ -375,6 +588,7 @@ function setupIpc() {
     stats: store.stats(),
     mcpServers: mcp ? mcp.listPublic() : [],
     loops: listener ? listener.list() : [],
+    customWorkflows: store.settings.customWorkflows || [],
   }));
 
   register('app:saveSettings', async (event, patch) => {
@@ -578,6 +792,8 @@ function setupIpc() {
 
   register('chat:abort', async (event, id) => agent.abort(String(id)));
 
+  register('chat:compress', async (event, id) => agent.compress(String(id)));
+
   register('chat:export', async (event, id) => {
     const conv = store.getConversation(String(id));
     if (!conv) throw new Error('对话不存在');
@@ -681,19 +897,29 @@ function setupIpc() {
   register('workflow:install', async (event, payload = {}) => {
     const root = payload.root || store.settings.workflowRoot || defaultWorkflowRoot();
     const win = event.sender;
-    const result = await workflow.install({
-      root,
-      project: payload.project || 'P001_第一个项目',
-      projectTitle: payload.projectTitle || '',
-      codeRoot: payload.codeRoot || '',
-      deployTarget: payload.deployTarget || '',
-      baseline: payload.baseline || '',
-      force: Boolean(payload.force),
-      onProgress: (p) => {
-        if (!win.isDestroyed()) win.send('workflow:progress', p);
-      },
-    });
+    const repair = Boolean(payload.repair);
+    if (listener) listener.setConfiguring(true);
+    let result;
+    try {
+      result = await workflow.install({
+        root,
+        project: payload.project || 'P001_第一个项目',
+        projectTitle: payload.projectTitle || '',
+        codeRoot: payload.codeRoot || '',
+        deployTarget: payload.deployTarget || '',
+        baseline: payload.baseline || '',
+        force: Boolean(payload.force),
+        customConfig: repair ? workflow.configFor(root) : null,
+        repair,
+        onProgress: (p) => {
+          if (!win.isDestroyed()) win.send('workflow:progress', p);
+        },
+      });
+    } finally {
+      if (listener) listener.setConfiguring(false);
+    }
     const patch = { workflowRoot: result.root };
+    if (!result.custom) patch.standardRoot = result.root;
     if (!store.settings.defaultWorkspace && result.projectRoot) patch.defaultWorkspace = result.projectRoot;
     store.saveSettings(patch);
     if (mcp) {
@@ -704,6 +930,204 @@ function setupIpc() {
       }
     }
     return { ...workflowState(), installResult: result };
+  });
+
+  register('workflow:listCustom', async () => {
+    const list = Array.isArray(store.settings.customWorkflows) ? store.settings.customWorkflows : [];
+    const activeRoot = String(store.settings.workflowRoot || '').toLowerCase();
+    return list.map((item) => ({
+      ...item,
+      exists: fs.existsSync(item.root),
+      active: String(item.root || '').toLowerCase() === activeRoot,
+    }));
+  });
+
+  register('workflow:exportTemplate', async (event, payload = {}) => {
+    const list = Array.isArray(store.settings.customWorkflows) ? store.settings.customWorkflows : [];
+    const item = payload.id
+      ? list.find((it) => it.id === payload.id)
+      : list.find((it) => String(it.root).toLowerCase() === String(store.settings.workflowRoot || '').toLowerCase());
+    if (!item) throw new Error('找不到要导出的自定义工作流');
+    const config = workflow.configFor(item.root);
+    if (!config) throw new Error('目录里的自定义配置不存在或已损坏');
+    const template = templateFromConfig(config);
+    const safe = template.name.replace(/[\\/:*?"<>|]/g, '_').slice(0, 40) || '自定义工作流';
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: '导出工作流模板',
+      defaultPath: path.join(app.getPath('documents'), `AIOA-模板-${safe}.json`),
+      filters: [{ name: 'AIOA 模板', extensions: ['json'] }],
+    });
+    if (result.canceled || !result.filePath) return { canceled: true };
+    fs.writeFileSync(result.filePath, JSON.stringify(template, null, 2), 'utf8');
+    return { canceled: false, path: result.filePath, name: template.name };
+  });
+
+  register('workflow:importTemplate', async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: '导入工作流模板',
+      properties: ['openFile'],
+      filters: [{ name: 'AIOA 模板', extensions: ['json'] }],
+    });
+    if (result.canceled || !result.filePaths.length) return { canceled: true };
+    const file = result.filePaths[0];
+    const stat = fs.statSync(file);
+    if (stat.size > 1024 * 1024) throw new Error('模板文件过大（超过 1 MB）');
+    let parsed;
+    try {
+      parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+    } catch (err) {
+      throw new Error(`模板不是合法 JSON：${err.message}`);
+    }
+    const template = validateTemplate(parsed);
+    return { canceled: false, path: file, template };
+  });
+
+  register('workflow:normalizeDuty', async (event, payload = {}) => {
+    const { provider, key, model } = normalizationModel();
+    const type = ROLE_TYPE_LABEL[payload.type] ? payload.type : 'worker';
+    const result = await normalizeDraft({
+      draft: payload.draft,
+      code: String(payload.code || ''),
+      alias: String(payload.alias || ''),
+      type,
+      typeLabel: ROLE_TYPE_LABEL[type],
+      model: `${provider.id}/${model}`,
+      callModel: async ({ system, user }) => {
+        let text = '';
+        await streamChat({
+          provider,
+          key,
+          model,
+          system,
+          messages: [{ role: 'user', content: user }],
+          tools: [],
+          onEvent: (name, data) => {
+            if (name === 'text') text += (data && data.text) || '';
+          },
+        });
+        return text;
+      },
+    });
+    result.diff = dutyDiff(payload.draft, result.dutyPackage);
+    return result;
+  });
+
+  register('workflow:validateDuty', async (event, payload = {}) => {
+    const type = ROLE_TYPE_LABEL[payload.type] ? payload.type : 'worker';
+    const dutyPackage = manualDutyPackage({
+      name: payload.name,
+      summary: payload.summary,
+      criteria: payload.criteria,
+      escalate: payload.escalate,
+      tools: payload.tools,
+      forbidden: payload.forbidden,
+    }, {
+      code: String(payload.code || ''),
+      alias: String(payload.alias || ''),
+      type,
+    });
+    return { dutyPackage, diff: dutyDiff(payload.draft, dutyPackage) };
+  });
+
+  register('workflow:updateRoleDuty', async (event, payload = {}) => {
+    const root = workflow.normalizeRoot(payload.root || store.settings.workflowRoot || defaultWorkflowRoot());
+    const result = workflow.updateRoleDuty(root, String(payload.code || ''), payload.dutyPackage, {
+      draft: payload.draft,
+    });
+    return {
+      ...workflowState(),
+      updated: { code: payload.code, cardPath: result.cardPath },
+      customWorkflows: Array.isArray(store.settings.customWorkflows) ? store.settings.customWorkflows : [],
+    };
+  });
+
+  register('workflow:createCustom', async (event, payload = {}) => {
+    const list = Array.isArray(store.settings.customWorkflows) ? store.settings.customWorkflows : [];
+    assertCustomSlot(list);
+    const root = workflow.normalizeRoot(payload.root);
+    if (list.some((item) => path.resolve(item.root).toLowerCase() === root.toLowerCase())) {
+      throw new Error('这个根目录已经登记为自定义工作流');
+    }
+    const config = buildCustomConfig({
+      name: payload.name,
+      root,
+      techReview: Boolean(payload.techReview),
+      advisorReview: payload.advisorReview !== false,
+      customRoles: Array.isArray(payload.customRoles) ? payload.customRoles : [],
+    });
+    const win = event.sender;
+    if (listener) listener.setConfiguring(true);
+    let result;
+    try {
+      result = await workflow.install({
+        root,
+        customConfig: config,
+        project: payload.project || 'P001_第一个项目',
+        projectTitle: payload.projectTitle || '',
+        codeRoot: payload.codeRoot || '',
+        deployTarget: payload.deployTarget || '',
+        baseline: payload.baseline || '',
+        onProgress: (p) => {
+          if (!win.isDestroyed()) win.send('workflow:progress', p);
+        },
+      });
+    } finally {
+      if (listener) listener.setConfiguring(false);
+    }
+    const entry = {
+      id: `custom_${Date.now().toString(36)}`,
+      name: config.name,
+      root,
+      switches: config.switches,
+      stations: config.stations.length,
+      createdAt: new Date().toISOString(),
+    };
+    const next = [...list, entry];
+    const patch = { customWorkflows: next, workflowRoot: root };
+    const currentRoot = store.settings.workflowRoot;
+    if (currentRoot && !workflow.configFor(currentRoot)) patch.standardRoot = currentRoot;
+    if (!store.settings.defaultWorkspace && result.projectRoot) patch.defaultWorkspace = result.projectRoot;
+    store.saveSettings(patch);
+    if (mcp) {
+      try {
+        mcp.importFromWorkflow(root);
+      } catch (err) {
+        logLine(`mcp import after custom install failed: ${err.message}`);
+      }
+    }
+    return { ...workflowState(), installResult: result, customWorkflows: next };
+  });
+
+  register('workflow:switchCustom', async (event, id) => {
+    const list = Array.isArray(store.settings.customWorkflows) ? store.settings.customWorkflows : [];
+    const item = list.find((entry) => entry.id === String(id));
+    if (!item) throw new Error('自定义工作流不存在');
+    if (!fs.existsSync(item.root)) throw new Error(`目录不存在：${item.root}`);
+    if (!workflow.configFor(item.root)) throw new Error('目录里没有 _AIOA_WORKFLOW.json，可能已被移动或删除');
+    store.saveSettings({ workflowRoot: item.root });
+    return { ...workflowState(), customWorkflows: list };
+  });
+
+  register('workflow:removeCustom', async (event, id) => {
+    const list = Array.isArray(store.settings.customWorkflows) ? store.settings.customWorkflows : [];
+    const item = list.find((entry) => entry.id === String(id));
+    const next = list.filter((entry) => entry.id !== String(id));
+    const patch = { customWorkflows: next };
+    const activeRoot = String(store.settings.workflowRoot || '').toLowerCase();
+    if (item && activeRoot === String(item.root).toLowerCase()) {
+      patch.workflowRoot = next[0] ? next[0].root : '';
+    }
+    store.saveSettings(patch);
+    return { ...workflowState(), customWorkflows: next };
+  });
+
+  register('workflow:switchStandard', async () => {
+    const standardRoot = store.settings.standardRoot;
+    if (!standardRoot) throw new Error('还没有记录标准工作流目录');
+    if (!fs.existsSync(standardRoot)) throw new Error(`标准工作流目录不存在：${standardRoot}`);
+    if (workflow.configFor(standardRoot)) throw new Error('记录的标准目录实际是自定义工作流');
+    store.saveSettings({ workflowRoot: standardRoot });
+    return workflowState();
   });
 
   register('workflow:createProject', async (event, payload = {}) => {
@@ -770,7 +1194,7 @@ function setupIpc() {
   register('workflow:stationAction', async (event, payload = {}) => {
     const state = workflowState();
     if (!state.projectRoot) throw new Error('没有活动项目');
-    const station = STATIONS.find((s) => s.num === String(payload.station));
+    const station = workflow.stationByNum(state.root, payload.station);
     if (!station) throw new Error('未知工位');
     return workflow.stationAction(state.root, state.projectRoot, station, String(payload.action));
   });
@@ -794,7 +1218,7 @@ function setupIpc() {
   register('workflow:tidy', async (event, payload = {}) => {
     const state = workflowState();
     if (!state.projectRoot) throw new Error('没有活动项目');
-    return workflow.tidy(state.projectRoot, { apply: Boolean(payload.apply) });
+    return workflow.tidy(state.projectRoot, { apply: Boolean(payload.apply), controlRoot: state.root });
   });
 
   register('workflow:clearLocks', async (event, payload = {}) => {

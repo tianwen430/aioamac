@@ -28,6 +28,7 @@ const S = {
   finishHandled: new Set(),
   loops: new Map(),
   mcpServers: [],
+  customWorkflows: [],
   live: null,
   workflowTab: 'overview',
   terminalFilter: 'all',
@@ -385,6 +386,7 @@ async function applyAppState(state) {
   S.defaultRoot = state.defaultRoot || '';
   S.stats = state.stats || null;
   S.mcpServers = state.mcpServers || [];
+  S.customWorkflows = state.customWorkflows || [];
   S.loops = new Map((state.loops || []).map((loop) => [loop.conversationId, loop]));
   applyTheme(S.settings.theme);
   if (!providerById(S.settingsProviderId)) {
@@ -529,6 +531,7 @@ function renderChatTopbar(bar) {
         ? `<button class="top-control warn" data-top-action="loop-stop" title="停止循环监听">${icon('pause')}<span class="label">停止监听</span></button>`
         : `<button class="top-control" data-top-action="loop-start" title="循环监听收件箱">${icon('clock')}<span class="label">监听</span></button>`) : ''}
       ${conv ? `<button class="icon-btn" data-top-action="export" title="导出对话">${icon('copy')}</button>` : ''}
+      ${conv && !running && (conv.messages || []).length > 10 ? `<button class="icon-btn" data-top-action="compress" title="压缩历史：把较早消息摘要，保留最近 8 条">${icon('book')}</button>` : ''}
       <button class="icon-btn" data-top-action="new-chat" title="新建对话">${icon('plus')}</button>
     </div>`;
 }

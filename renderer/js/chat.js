@@ -492,6 +492,32 @@ async function exportConversation() {
   }
 }
 
+async function compressConversation() {
+  const conv = S.activeConv;
+  if (!conv) return;
+  const count = (conv.messages || []).length;
+  if (count <= 10) {
+    toast('对话还很短，不需要压缩', 'info', 2600);
+    return;
+  }
+  const ok = await confirmAction({
+    title: '压缩历史',
+    message: `把较早的 ${count - 8} 条消息摘要成一段背景，保留最近 8 条。`,
+    detail: '会用当前模型调用一次；摘要失败不会改动历史。压缩后可继续对话，旧消息不再逐条发送给模型。',
+    confirmText: '开始压缩',
+  });
+  if (!ok) return;
+  try {
+    const result = await window.api.chat.compress(conv.id);
+    await reloadActiveConversation();
+    renderSidebar();
+    renderTopbar();
+    toast(`历史已压缩：${result.before} → ${result.after} 条`, 'ok', 5000);
+  } catch (err) {
+    showError(err, '压缩历史失败');
+  }
+}
+
 function openWorkspaceModal() {
   const current = (S.activeConv && S.activeConv.workspace) || (S.settings && S.settings.defaultWorkspace) || '';
   showModal({

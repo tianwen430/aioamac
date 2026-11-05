@@ -7,7 +7,7 @@
     "hasSidebar": true,
     "hasComposer": true,
     "hasWorkflowView": true,
-    "text": "A\nAIOA 工作台\n本地 AI · 协同工作流\n对话\n工作流\n设置\n对话\n还没有对话\n点右上角 + 开始\n本地桥接 · 直连模型\n无账号 · 无服务器 · 不收费\n关于与数据位置\n设置\n模型服务、工作区与本地数据\nv1.0.0\n关于\n模型服务\n\nAPI Key 只保存在本机；默认仅本次运行有效，可选择用 Windows 系统加密记住。所有请求由本机直接发往服务商，不经过中转服务器。\n\nD\nDeepSeek\n2 个模型\n未配置\nO\nOpenAI\n4 个模型\n未配置\nA\nAnthropic Claude\n3 个模型\n未配置\nG\nGoogle Gemini\n2 个模型\n未配置\n智\n智谱 GLM\n3 个模型\n未配置\n阿\n阿里云百炼\n3 个模型\n未配置\nM\nMoonshot Kimi\n2 个模型\n未配置\n硅\n硅基流动\n2 个模型\n未配置\nO\nOpenRouter\n3 个模型\n未配置\nO\nOllama 本地模型\n2 个模型\n无需 Key\n新增自定义服务\nDeepSeek\nDeepSeek 官方 API，OpenAI 兼容 官方控制台\n未配置\n接口地址 Base URL\nOpenAI 兼容填到 /v1；Anthropic 填到 /v1。程序会自动拼接 /chat/completions 或 /messages。\n接口类型\nOpenAI 兼容\nAnthropic Messages\nAPI Key",
+    "text": "A\nAIOA 工作台\n本地 AI · 协同工作流\n对话\n工作流\n设置\n对话\n还没有对话\n点右上角 + 开始\n本地桥接 · 直连模型\n无账号 · 无服务器 · 不收费\n关于与数据位置\n设置\n模型服务、工作区与本地数据\nv2.4.1\n关于\n模型服务\n\nAPI Key 只保存在本机；默认仅本次运行有效，可选择用 Windows 系统加密记住。所有请求由本机直接发往服务商，不经过中转服务器。\n\nD\nDeepSeek\n2 个模型\n未配置\nO\nOpenAI\n4 个模型\n未配置\nA\nAnthropic Claude\n3 个模型\n未配置\nG\nGoogle Gemini\n2 个模型\n未配置\n智\n智谱 GLM\n3 个模型\n未配置\n阿\n阿里云百炼\n3 个模型\n未配置\nM\nMoonshot Kimi\n2 个模型\n未配置\n硅\n硅基流动\n2 个模型\n未配置\nO\nOpenRouter\n3 个模型\n未配置\nO\nOllama 本地模型\n2 个模型\n无需 Key\n新增自定义服务\nDeepSeek\nDeepSeek 官方 API，OpenAI 兼容 官方控制台\n未配置\n接口地址 Base URL\nOpenAI 兼容填到 /v1；Anthropic 填到 /v1。程序会自动拼接 /chat/completions 或 /messages。\n接口类型\nOpenAI 兼容\nAnthropic Messages\nAPI Key",
     "renameTest": {
       "ok": true,
       "savedTitle": "改名后的对话",
@@ -18,6 +18,72 @@
       "hasMcpImport": true,
       "hasLoopButton": true,
       "mcpServers": 1
+    },
+    "customCheck": {
+      "hasNewButton": true,
+      "hasWizard": true,
+      "defaultRoot": "D:\\AIOA\\AI协同工作流_可复制套件\\05_应用_v2\\test\\smoke-wf-root-custom-1",
+      "advisorDefault": true,
+      "techDefault": false,
+      "roleBlocks": 3,
+      "defaultRootHasCustom": true,
+      "hasImportTemplate": true,
+      "hasNormalizeBtn": true,
+      "dutyEditorHidden": true,
+      "hasPreset": true,
+      "presetDutyReady": true,
+      "presetDraftFilled": true,
+      "noModelGuide": true,
+      "aiNormalizeFailed": true,
+      "aiOpenedEditor": true,
+      "manualDutyReady": true,
+      "manualDraftMatched": true,
+      "previewVisible": true,
+      "isCustom": true,
+      "stationNums": [
+        "01",
+        "02",
+        "04",
+        "05",
+        "A01"
+      ],
+      "stationCount": 5,
+      "customRows": 1,
+      "hasExportTemplate": true,
+      "hasA01Text": true,
+      "hasRouteMap": true,
+      "routeNodes": 11,
+      "routeHasDisabledNote": true,
+      "routeHasCustomRole": true,
+      "hasDutyChip": true,
+      "dutyModal": true,
+      "dutySaveDisabled": true,
+      "files": {
+        "config": true,
+        "hasA01Card": true,
+        "no03Card": true,
+        "no08Card": true,
+        "selfReview": true,
+        "dutyInConfig": true,
+        "dutyInCard": true
+      },
+      "templatePrefill": {
+        "title": "从模板新建自定义工作流",
+        "name": "模板导入冒烟",
+        "tech": true,
+        "advisor": false,
+        "dutyReady": true,
+        "preview": true,
+        "draft": "维护文档索引"
+      },
+      "standardSwitch": {
+        "ok": true,
+        "stations": 8,
+        "hasCustomRow": true,
+        "hasRouteMap": true,
+        "routeNodes": 14,
+        "routeNoDisabledNote": true
+      }
     },
     "nav": [
       {

@@ -24,7 +24,7 @@ function renderWorkflowSetup(root) {
       <p>把 8 个独立 AI 窗口组织成一条文件驱动的流水线：总控 → 实施布置 → 代码/美工 → Debug → 部署。
          工作台负责目录、角色卡、指令复制、需求投递和状态监控；AI 窗口仍由你自行选择模型和客户端。</p>
       <div class="feature-row">
-        <div class="feature-mini">${icon('flow')}<b>8 个工位</b><span>目录树、角色卡、心跳、锁、归档</span></div>
+        <div class="feature-mini">${icon('flow')}<b>8 工位标准 / 4 人起自定义</b><span>目录树、角色卡、心跳、锁、归档</span></div>
         <div class="feature-mini">${icon('copy')}<b>一键指令</b><span>上班 / 下班 / 继续监听 / 角色卡+上班</span></div>
         <div class="feature-mini">${icon('book')}<b>需求与终端</b><span>结构化投递需求，集中查看汇报</span></div>
       </div>
@@ -40,7 +40,7 @@ function renderWorkflowSetup(root) {
               <input class="input" id="setupRoot" name="root" value="${esc(setupRoot)}" placeholder="D:\\ai-workflow" autocomplete="off">
               <button class="btn" type="button" data-wf="setup-browse">${icon('folder')} 选择</button>
             </div>
-            <div class="hint">协议、8 张角色卡、tools、MCP 服务和 projects 都会放在这里。</div>
+            <div class="hint">协议、角色卡、tools、MCP 服务和 projects 都会放在这里。</div>
           </div>
           <div class="field">
             <label>首个项目名</label>
@@ -68,6 +68,7 @@ function renderWorkflowSetup(root) {
         <div class="form-actions">
           <button class="btn primary" type="submit" id="installBtn">${icon('play')} 安装并创建项目</button>
           <button class="btn" type="button" data-wf="setup-browse">${icon('folder')} 选择目录</button>
+          <button class="btn" type="button" data-wf="custom-new">${icon('flow')} 新建自定义工作流</button>
           <span class="tiny muted">已有目录时只补齐缺失文件，不覆盖你改过的角色卡和协议。</span>
         </div>
       </form>
@@ -118,9 +119,13 @@ function renderWorkflowOverview(w) {
       ${summaryCard('需要关注', String(decisions + blockers), `决策 ${decisions} · 阻塞 ${blockers} · 卡住 ${stuck} · 积压 ${pendingTotal}`)}
     </div>
 
+    ${renderCustomWorkflowSection(w)}
+
+    ${renderRouteMap(w)}
+
     <div class="section">
       <div class="section-head">
-        <h2>8 个工位</h2>
+        <h2>${(w.stations || []).length} 个工位</h2>
         <span class="desc">点「角色卡」复制全文，点「上班」复制指令；下班会写入 _OFFDUTY.md</span>
         <div class="actions">
           <button class="btn tiny" data-wf="command" data-command="copy-startup">${icon('copy')} 复制开工清单</button>
@@ -137,12 +142,13 @@ function renderWorkflowOverview(w) {
         <span class="desc">首次开工或窗口重开时，按这个顺序把角色卡贴进窗口</span>
       </div>
       <div class="startup-list">
-        ${STATION_ORDER.map((num, idx) => {
-          const st = (w.stations || []).find((s) => s.num === num);
-          if (!st) return '';
+        ${(w.stations || []).slice().sort((a, b) => (a.order || 0) - (b.order || 0)).map((st, idx) => {
+          const badge = st.custom
+            ? '<span class="badge gray">自定义</span>'
+            : st.num === '08' ? '<span class="badge gray">可选</span>' : '';
           return `<div class="startup-row">
             <div class="startup-order">${idx + 1}</div>
-            <div><div class="startup-name">${esc(st.label)} ${st.num === '08' ? '<span class="badge gray">可选</span>' : ''}</div><div class="startup-desc">${esc(st.short)}</div></div>
+            <div><div class="startup-name">${esc(st.label)} ${badge}</div><div class="startup-desc">${esc(st.short)}</div></div>
             <span class="badge blue">${esc(st.model)}</span>
             <button class="btn tiny" data-wf="station" data-station="${st.num}" data-action="rolecard_start">${icon('copy')} 角色卡+上班</button>
             <button class="btn tiny" data-wf="station" data-station="${st.num}" data-action="rolecard">${icon('book')} 仅角色卡</button>
@@ -167,6 +173,106 @@ function renderWorkflowOverview(w) {
         ${commandCard('tidy', 'tool', '预览瘦身', '归档已处理文件，不删除')}
       </div>
     </div>`;
+}
+
+function routeStation(w, num) {
+  return (w.stations || []).find((s) => s.num === num) || null;
+}
+
+function routeNode(st, label, small, tone = 'blue') {
+  if (!st) return '';
+  return `<button type="button" class="route-node tone-${tone}" data-wf="station-more" data-station="${esc(st.num)}" title="${esc(st.label)} · ${esc(st.short)}"><b>${esc(label || st.label)}</b><small>${esc(small || st.short)}</small></button>`;
+}
+
+function routeHumanNode(label, small) {
+  return `<div class="route-node human"><b>${esc(label)}</b><small>${esc(small)}</small></div>`;
+}
+
+function routeLink(prefix) {
+  return `<div class="route-link"><span>→</span><small>${esc(prefix)}</small></div>`;
+}
+
+function renderRouteMap(w) {
+  if (!w || !w.installed) return '';
+  const s01 = routeStation(w, '01');
+  const s02 = routeStation(w, '02');
+  const s03 = routeStation(w, '03');
+  const s04 = routeStation(w, '04');
+  const s05 = routeStation(w, '05');
+  const s08 = routeStation(w, '08');
+  const customs = (w.stations || []).filter((s) => s.custom);
+  if (!s01 || !s02 || !s04 || !s05) return '';
+
+  const core = [
+    routeHumanNode('人类', '汇报终端'),
+    routeLink('[需求]_'),
+    routeNode(s01, '01 总经理', '接需求 · 出策划', 'blue'),
+    routeLink('[策划]_'),
+    routeNode(s02, '02 总监', '切任务 · 验收', 'purple'),
+    routeLink('[任务]_'),
+    routeNode(s04, '04 员工', '执行 · 自测', 'green'),
+    routeLink('[待测试]_'),
+    routeNode(s05, '05 质检', '测试 · 复核', 'amber'),
+    routeLink('[验收通过]_'),
+    routeNode(s02, '02 总监', '核准成果', 'purple'),
+    routeLink('[汇报]_'),
+    routeNode(s01, '01 总经理', '分配版本 · 发布', 'blue'),
+    routeLink('[发布]_'),
+    routeHumanNode('人类', '汇报终端'),
+  ].join('');
+
+  const sides = [];
+  if (s03) {
+    sides.push(`<div class="route-side-card">
+      <div class="route-side-head">技术升级</div>
+      <div class="route-sides-row">
+        ${routeNode(s04, '04 员工', '问题上报', 'green')}${routeLink('[问题]_')}
+        ${routeNode(s03, '03 部门经理', '技术裁决', 'red')}${routeLink('[技术裁决]_')}
+        ${routeNode(s04, '04 员工', '按裁决执行', 'green')}
+      </div>
+    </div>`);
+  } else {
+    sides.push(`<div class="route-side-card note">
+      <div class="route-side-head">技术升级（03 未启用）</div>
+      <div class="route-side-note">04 的 <code>[问题]_</code> 直接报 02，由 02 强制接管技术裁决。</div>
+    </div>`);
+  }
+  if (s08) {
+    sides.push(`<div class="route-side-card">
+      <div class="route-side-head">策划审校</div>
+      <div class="route-sides-row">
+        ${routeNode(s01, '01 总经理', '策划初稿', 'blue')}${routeLink('[策划]_初稿')}
+        ${routeNode(s08, '08 顾问', '独立审校', 'gray')}${routeLink('[审校意见]_')}
+        ${routeNode(s01, '01 总经理', '定稿', 'blue')}
+      </div>
+    </div>`);
+  } else {
+    sides.push(`<div class="route-side-card note">
+      <div class="route-side-head">策划审校（08 未启用）</div>
+      <div class="route-side-note">01 自审定稿，策划稿直接发 02，不再有送审往返。</div>
+    </div>`);
+  }
+  for (const st of customs) {
+    sides.push(`<div class="route-side-card">
+      <div class="route-side-head">${esc(st.label)} · 自定义角色</div>
+      <div class="route-sides-row">
+        ${routeNode(s02, '02 总监', '派任务', 'purple')}${routeLink(`[任务]_${st.num}_`)}
+        ${routeNode(st, st.label, '按职责契约执行', 'gray')}${routeLink(`[交付]_${st.num}_`)}
+        ${routeNode(s02, '02 总监', '验收', 'purple')}
+      </div>
+    </div>`);
+  }
+
+  return `<div class="section">
+    <div class="section-head">
+      <h2>流程路由</h2>
+      <span class="desc">按当前拓扑生成；点工位节点可打开快捷操作。关闭的开关会显示为替代路径。</span>
+    </div>
+    <div class="route-map">
+      <div class="route-scroll"><div class="route-lane">${core}</div></div>
+      <div class="route-sides">${sides.join('')}</div>
+    </div>
+  </div>`;
 }
 
 function stationCardHtml(st) {
@@ -198,6 +304,758 @@ function stationCardHtml(st) {
         <button class="btn tiny" data-wf="station-more" data-station="${st.num}">${icon('more')} 更多</button>
       </div>
     </article>`;
+}
+
+function renderCustomWorkflowSection(w) {
+  const list = Array.isArray(S.customWorkflows) ? S.customWorkflows : [];
+  const current = w && w.custom ? w.custom : null;
+  const standardRoot = (S.settings && S.settings.standardRoot) || '';
+  const standardRow = standardRoot ? `<div class="mcp-row" style="padding:10px 0">
+    <div class="mcp-main">
+      <div class="mcp-name">标准 8 工位 ${w && !w.isCustom ? '<span class="badge green">使用中</span>' : ''}</div>
+      <div class="mcp-cmd mono" title="${esc(standardRoot)}">${esc(shortPath(standardRoot, 80))}</div>
+      <div class="mcp-cmd">8 个工位 · 03 开 · 08 开 · 模板只读</div>
+    </div>
+    <div class="mcp-actions">
+      ${w && w.isCustom ? '<button class="btn tiny" data-wf="switch-standard">切换</button>' : ''}
+    </div>
+  </div>` : '';
+  const rows = list.map((item) => {
+    const active = w && w.root && String(item.root).toLowerCase() === String(w.root).toLowerCase();
+    const sw = item.switches || {};
+    const roles = active && w.custom && Array.isArray(w.custom.customRoles) ? w.custom.customRoles : [];
+    return `<div class="mcp-row" style="padding:10px 0">
+      <div class="mcp-main">
+        <div class="mcp-name">${esc(item.name)} ${active ? '<span class="badge green">使用中</span>' : ''} ${item.exists === false ? '<span class="badge red">目录不存在</span>' : ''}</div>
+        <div class="mcp-cmd mono" title="${esc(item.root)}">${esc(shortPath(item.root, 80))}</div>
+        <div class="mcp-cmd">${item.stations || '-'} 个工位 · 03 ${sw.techReview ? '开' : '关'} · 08 ${sw.advisorReview !== false ? '开' : '关'}</div>
+        ${roles.length ? `<div class="duty-role-row">${roles.map((r) => `<span class="duty-chip">${esc(r.code)} ${esc(r.dutyName || r.name)}<button class="btn tiny" data-wf="edit-duty" data-code="${esc(r.code)}">编辑职责</button></span>`).join('')}</div>` : ''}
+      </div>
+      <div class="mcp-actions">
+        ${active ? '' : `<button class="btn tiny" data-wf="custom-switch" data-id="${esc(item.id)}"${item.exists === false ? ' disabled' : ''}>切换</button>`}
+        <button class="btn tiny" data-wf="export-template" data-id="${esc(item.id)}"${item.exists === false ? ' disabled' : ''}>导出模板</button>
+        <button class="btn tiny danger" data-wf="custom-remove" data-id="${esc(item.id)}">移除</button>
+      </div>
+    </div>`;
+  }).join('');
+  return `<div class="section">
+    <div class="section-head">
+      <h2>自定义工作流</h2>
+      <span class="desc">标准模板只读；自定义最多两套。03/08 是开关，06/07 不带，新增角色最多 3 个。</span>
+      <div class="actions">
+        <button class="btn tiny" data-wf="import-template"${list.length >= 2 ? ' disabled' : ''}>${icon('folder')} 导入模板</button>
+        <button class="btn tiny" data-wf="custom-new"${list.length >= 2 ? ' disabled' : ''}>${icon('plus')} 新建自定义工作流</button>
+      </div>
+    </div>
+    ${current ? `<div class="warning-box blue" style="margin-bottom:10px">当前：<b>${esc(current.name)}</b> · 03 ${current.switches && current.switches.techReview ? '已启用' : '未启用'} · 08 ${current.switches && current.switches.advisorReview ? '已启用' : '未启用'}</div>` : ''}
+    <div class="card card-pad">
+      ${standardRow}${rows || (standardRow ? '' : '<div class="empty-mini" style="padding:8px 2px">还没有自定义工作流。点右上角「新建自定义工作流」；标准 8 工位不受影响。</div>')}
+    </div>
+  </div>`;
+}
+
+const ROLE_ALIASES = ['角色一', '角色二', '角色三'];
+const ROLE_TYPE_OPTIONS = [
+  ['worker', '执行型（接任务、产出）'],
+  ['design', '设计型（视觉 / 素材）'],
+  ['ops', '运维型（部署 / 环境）'],
+  ['docs', '资料&运营型（文档 / 调研）'],
+];
+
+// P3 职责模板库：从样本起步再改，降低"从头写"心智。
+const ROLE_PRESETS = [
+  {
+    id: 'docs',
+    label: '资料&运营：文档索引与会议纪要',
+    draft: '维护项目文档索引、会议纪要与版本记录，保证资料可检索、可追溯。',
+    dutyPackage: {
+      name: '资料运营',
+      summary: '长期维护项目文档索引、会议纪要与版本记录；不承担代码实现和最终裁决。',
+      criteria: [
+        '每次会议结束后必须新增纪要文件，并写明参与人、结论和待办；',
+        '索引中的每一条链接必须可打开，失效链接必须当轮修正；',
+        '文档版本必须保留更新日期和负责人，不得覆盖历史版本。',
+      ],
+      escalate: ['会议结论与项目基线冲突；', '资料涉及权限或隐私，无法自行处理。'],
+      forbidden: ['不得删除历史版本；', '不得修改代码文件或验收标准。'],
+      tools: ['read', 'search', 'write'],
+    },
+  },
+  {
+    id: 'data',
+    label: '数据整理：清洗、统计与报表',
+    draft: '负责数据清洗、口径统一、统计报表和异常标注。',
+    dutyPackage: {
+      name: '数据整理',
+      summary: '长期负责数据清洗、口径统一、统计报表与异常标注；不负责业务决策。',
+      criteria: [
+        '每份报表必须注明数据来源、统计口径和生成时间；',
+        '清洗后的数据必须保留原始行数与清洗后行数；',
+        '异常值必须单独列出并标注处理方式，不得静默丢弃。',
+      ],
+      escalate: ['数据口径存在冲突；', '源数据缺失或无法访问。'],
+      forbidden: ['不得修改原始数据文件；', '不得把未脱敏数据写到产出目录。'],
+      tools: ['read', 'search', 'write'],
+    },
+  },
+  {
+    id: 'ops',
+    label: '运营支持：内容排期与发布检查',
+    draft: '负责内容排期、发布前检查和发布记录。',
+    dutyPackage: {
+      name: '运营支持',
+      summary: '长期负责内容排期、发布前检查与发布记录；不设计视觉稿，不改代码。',
+      criteria: [
+        '每次发布前必须核对标题、封面、链接和发布时间四项；',
+        '发布记录必须包含版本号、渠道、执行人和结果；',
+        '发布失败必须保留错误信息并写 `[阻塞]_` 或 `[请示]_`。',
+      ],
+      escalate: ['发布渠道不可用；', '内容与已批准版本不一致。'],
+      forbidden: ['不得绕过 01 直接发布；', '不得修改验收标准或代码。'],
+      tools: ['read', 'search', 'write'],
+    },
+  },
+  {
+    id: 'audit',
+    label: '安全审计：权限、日志与风险清单',
+    draft: '负责权限清单核对、操作日志审计和风险项跟踪。',
+    dutyPackage: {
+      name: '安全审计',
+      summary: '长期负责权限清单核对、操作日志审计与风险项跟踪；不直接改代码或账号。',
+      criteria: [
+        '每次审计必须输出权限清单、异常项和风险等级三部分；',
+        '高风险项必须给出复现步骤和影响范围；',
+        '审计记录必须保留时间、对象和依据，不得只写结论。',
+      ],
+      escalate: ['发现越权访问或数据泄露迹象；', '需要修改账号权限或生产配置。'],
+      forbidden: ['不得自行修改权限；', '不得复制或外传敏感数据。'],
+      tools: ['read', 'search'],
+    },
+  },
+];
+
+function roleTypeLabel(type) {
+  const hit = ROLE_TYPE_OPTIONS.find(([value]) => value === type);
+  return hit ? hit[1] : '执行型';
+}
+
+function dutyFieldsHtml(prefix, pkg = {}) {
+  const p = pkg || {};
+  return `<div class="form-grid">
+    <div class="field"><label>职责名称 *</label><input class="input" name="${prefix}Name" value="${esc(p.name || '')}" placeholder="例：竞品调研" autocomplete="off"></div>
+    <div class="field span-2"><label>工作内容 *</label><input class="input" name="${prefix}Summary" value="${esc(p.summary || '')}" placeholder="长期负责什么、不负责什么" autocomplete="off"></div>
+    <div class="field span-2"><label>完成标准 *（每行一条，2~6 条，必须可判定）</label><textarea class="textarea" name="${prefix}Criteria" rows="3" placeholder="每个竞品必须包含来源链接与采集日期；&#10;对比表至少覆盖价格、功能、渠道三项">${esc((p.criteria || []).join('\n'))}</textarea></div>
+    <div class="field span-2"><label>升级条件 *（每行一条）</label><textarea class="textarea" name="${prefix}Escalate" rows="2" placeholder="资料无法公开获取；&#10;对比口径需要改变">${esc((p.escalate || []).join('\n'))}</textarea></div>
+    <div class="field span-2"><label>禁止事项 *（每行一条）</label><textarea class="textarea" name="${prefix}Forbidden" rows="2" placeholder="不得修改代码文件；&#10;不得直接给 04 派活">${esc((p.forbidden || []).join('\n'))}</textarea></div>
+  </div>`;
+}
+
+function readDutyFields(root, prefix) {
+  const get = (name) => {
+    const el = root.querySelector(`[name="${prefix}${name}"]`);
+    return el ? el.value : '';
+  };
+  const lines = (name) => get(name).split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+  return {
+    name: get('Name').trim(),
+    summary: get('Summary').trim(),
+    criteria: lines('Criteria'),
+    escalate: lines('Escalate'),
+    forbidden: lines('Forbidden'),
+  };
+}
+
+function fillDutyFields(root, prefix, pkg = {}) {
+  const set = (name, value) => {
+    const el = root.querySelector(`[name="${prefix}${name}"]`);
+    if (el) el.value = value;
+  };
+  set('Name', pkg.name || '');
+  set('Summary', pkg.summary || '');
+  set('Criteria', (pkg.criteria || []).join('\n'));
+  set('Escalate', (pkg.escalate || []).join('\n'));
+  set('Forbidden', (pkg.forbidden || []).join('\n'));
+}
+
+function dutySummaryText(pkg = {}) {
+  const lines = [
+    `职责名称：${pkg.name || ''}`,
+    `工作内容：${pkg.summary || ''}`,
+    '完成标准：',
+    ...(pkg.criteria || []).map((c) => `  - ${c}`),
+    '升级条件：',
+    ...(pkg.escalate || []).map((c) => `  - ${c}`),
+    '禁止事项：',
+    ...(pkg.forbidden || []).map((c) => `  - ${c}`),
+  ];
+  return lines.join('\n');
+}
+
+function dutyPreviewHtml(pkg, draft, sourceLabel) {
+  const diff = `原文：\n${draft || '(空)'}\n\n规范化后：\n${dutySummaryText(pkg)}`;
+  return `<div class="duty-preview">
+    <div class="inline" style="justify-content:space-between;margin-bottom:6px">
+      <b>${esc(pkg.name || '职责包')}</b><span class="badge green">${esc(sourceLabel)}</span>
+    </div>
+    <div class="duty-summary">${esc(pkg.summary || '')}</div>
+    <div class="duty-lines">${(pkg.criteria || []).map((c) => `<div>· ${esc(c)}</div>`).join('')}</div>
+    <details class="duty-diff"><summary>查看改写前后 diff</summary><pre>${esc(diff)}</pre></details>
+  </div>`;
+}
+
+function setRoleDuty(root, i, pkg, draft, sourceLabel) {
+  const hidden = root.querySelector(`[name="roleDuty${i}"]`);
+  if (hidden) {
+    hidden.value = JSON.stringify(pkg);
+    hidden.dataset.draft = String(draft || '');
+  }
+  const preview = root.querySelector(`[data-role-preview="${i}"]`);
+  if (preview) preview.innerHTML = dutyPreviewHtml(pkg, draft, sourceLabel);
+  const status = root.querySelector(`[data-role-status="${i}"]`);
+  if (status) {
+    status.textContent = `已规范化（${sourceLabel}）`;
+    status.className = 'status-text ok';
+  }
+  fillDutyFields(root, `role${i}`, pkg);
+}
+
+function setRoleStatus(root, i, text, kind = '') {
+  const status = root.querySelector(`[data-role-status="${i}"]`);
+  if (!status) return;
+  status.textContent = text;
+  status.className = `status-text${kind ? ` ${kind}` : ''}`;
+}
+
+function safeParseJson(text) {
+  try {
+    return JSON.parse(String(text || ''));
+  } catch {
+    return null;
+  }
+}
+
+function openCustomWorkflowModal(template = null) {
+  const list = Array.isArray(S.customWorkflows) ? S.customWorkflows : [];
+  if (list.length >= 2) {
+    toast('自定义工作流最多两套。请先移除或导出其中一套（移除不会删除目录）', 'err', 4200);
+    return;
+  }
+  const fromTemplate = template || null;
+  const n = list.length + 1;
+  const baseRoot = (S.workflow && S.workflow.root) || (S.settings && S.settings.workflowRoot) || S.defaultRoot || 'D:\\ai-workflow';
+  const defaultRoot = `${baseRoot}-custom-${n}`;
+  const defaultName = fromTemplate ? `${fromTemplate.name}` : `自定义工作流 ${n}`;
+  const techOn = Boolean(fromTemplate && fromTemplate.switches && fromTemplate.switches.techReview);
+  const advisorOn = !fromTemplate || !fromTemplate.switches || fromTemplate.switches.advisorReview !== false;
+  const roleOptions = (selected) => ROLE_TYPE_OPTIONS
+    .map(([value, label]) => `<option value="${value}"${selected === value ? ' selected' : ''}>${label}</option>`)
+    .join('');
+  const presetOptions = `<option value="">不使用模板，自己写</option>` + ROLE_PRESETS
+    .map((p) => `<option value="${p.id}">${p.label}</option>`).join('');
+  showModal({
+    title: fromTemplate ? '从模板新建自定义工作流' : '新建自定义工作流',
+    subtitle: fromTemplate
+      ? `模板「${fromTemplate.name}」：开关与职责包已带入，选好根目录即可创建。`
+      : '核心 4 人固定（01/02/04/05），03/08 可开关；06/07 不带；新增角色最多 3 个。',
+    wide: true,
+    body: `
+      <form id="customWfForm">
+        <div class="form-grid">
+          <div class="field">
+            <label>工作流名称</label>
+            <input class="input" name="name" value="${esc(defaultName)}" autocomplete="off">
+          </div>
+          <div class="field span-2">
+            <label>独立根目录</label>
+            <div class="inline">
+              <input class="input" name="root" id="customWfRoot" value="${esc(defaultRoot)}" autocomplete="off">
+              <button class="btn" type="button" data-wf="custom-browse">${icon('folder')} 选择</button>
+            </div>
+            <div class="hint">必须是空目录或新目录；标准工作流目录不会被修改。</div>
+          </div>
+        </div>
+        <div class="divider"></div>
+        <div class="settings-row">
+          <div class="left"><b>启用 03 部门经理（技术裁决）</b><span>简单任务建议关闭。关闭后 04 的问题直接报 02，02 强制接管技术裁决。</span></div>
+          <div class="right"><label class="switch"><input type="checkbox" name="techReview"${techOn ? ' checked' : ''}><span class="slider"></span></label></div>
+        </div>
+        <div class="settings-row">
+          <div class="left"><b>启用 08 顾问（审校）</b><span>默认开启。关闭后 01 自审定稿，策划稿直接发 02。</span></div>
+          <div class="right"><label class="switch"><input type="checkbox" name="advisorReview"${advisorOn ? ' checked' : ''}><span class="slider"></span></label></div>
+        </div>
+        <div class="divider"></div>
+        <div class="hint" style="margin-bottom:6px">新增自定义角色（可留空；只填了草稿的才创建）。名字固定为角色一/二/三，先不支持改名。草稿必须经「AI 规范化」或「手动填写」后才能创建；也可以直接从职责模板库起步。</div>
+        ${[1, 2, 3].map((i) => {
+          const pre = fromTemplate && fromTemplate.customRoles ? fromTemplate.customRoles[i - 1] : null;
+          return `<div class="card card-pad custom-role" data-role="${i}" style="margin-top:8px">
+          <div class="inline" style="justify-content:space-between">
+            <b>新增角色 ${i}</b><span class="badge gray">A0${i} ${ROLE_ALIASES[i - 1]}</span>
+          </div>
+          <div class="form-grid" style="margin-top:8px">
+            <div class="field"><label>用途类型</label><select class="select" name="roleType${i}">${roleOptions(pre ? pre.type : 'worker')}</select></div>
+            <div class="field"><label>职责模板库（可选）</label><select class="select" data-role-preset="${i}">${presetOptions}</select></div>
+            <div class="field span-2"><label>任务内容草稿（随便写）</label><textarea class="textarea" name="roleDraft${i}" data-role-draft="${i}" rows="2" placeholder="例：负责搜集竞品资料，整理成对比表并给出结论">${esc(pre ? pre.draft : '')}</textarea></div>
+          </div>
+          <div class="inline" style="margin-top:8px;flex-wrap:wrap">
+            <button type="button" class="btn small" data-role-normalize="${i}">${icon('spark')} AI 规范化</button>
+            <button type="button" class="btn small" data-role-manual="${i}">手动填写</button>
+            <span class="status-text" data-role-status="${i}">草稿需要规范化后才能上岗</span>
+          </div>
+          <div data-role-preview="${i}"></div>
+          <div data-role-editor="${i}" hidden style="margin-top:10px">
+            ${dutyFieldsHtml(`role${i}`, {})}
+            <div class="inline" style="margin-top:8px">
+              <button type="button" class="btn small primary" data-role-apply="${i}">采用这份职责包</button>
+              <button type="button" class="btn small ghost" data-role-cancel="${i}">收起</button>
+            </div>
+          </div>
+          <input type="hidden" name="roleDuty${i}">
+        </div>`;
+        }).join('')}
+        <div class="warning-box blue" style="margin-top:12px">创建后可在对话顶部「监听」里给每个工位开循环；外部 AI 窗口仍然可选，不是必需。</div>
+        <div class="status-text" id="customWfProgress"></div>
+      </form>`,
+    footer: `<button class="btn" data-modal-close>取消</button><button class="btn primary" id="customWfCreate">${icon('check')} 创建</button>`,
+    onMount: (root, close) => {
+      const form = $('#customWfForm', root);
+      const browse = $('[data-wf="custom-browse"]', root);
+      if (browse) {
+        browse.addEventListener('click', async () => {
+          const input = $('#customWfRoot', root);
+          const picked = await window.api.app.chooseDirectory({
+            title: '选择自定义工作流根目录',
+            defaultPath: input ? input.value : undefined,
+          }).catch(() => '');
+          if (picked && input) input.value = picked;
+        });
+      }
+      for (let i = 1; i <= 3; i += 1) {
+        const draftEl = root.querySelector(`[data-role-draft="${i}"]`);
+        const typeEl = root.querySelector(`[name="roleType${i}"]`);
+        const normalizeBtn = root.querySelector(`[data-role-normalize="${i}"]`);
+        const manualBtn = root.querySelector(`[data-role-manual="${i}"]`);
+        const applyBtn = root.querySelector(`[data-role-apply="${i}"]`);
+        const cancelBtn = root.querySelector(`[data-role-cancel="${i}"]`);
+        const editor = root.querySelector(`[data-role-editor="${i}"]`);
+        const preview = root.querySelector(`[data-role-preview="${i}"]`);
+        const hidden = root.querySelector(`[name="roleDuty${i}"]`);
+        const presetEl = root.querySelector(`[data-role-preset="${i}"]`);
+
+        if (presetEl) {
+          presetEl.addEventListener('change', () => {
+            const preset = ROLE_PRESETS.find((p) => p.id === presetEl.value);
+            if (!preset) return;
+            if (draftEl) draftEl.value = preset.draft;
+            setRoleDuty(root, i, { ...preset.dutyPackage, status: 'manual' }, preset.draft, '职责模板库');
+            if (editor) editor.hidden = true;
+            if (preview) preview.hidden = false;
+            setRoleStatus(root, i, `已套用模板：${preset.dutyPackage.name}`, 'ok');
+          });
+        }
+
+        if (draftEl) {
+          draftEl.addEventListener('input', () => {
+            if (hidden && hidden.value && hidden.dataset.draft !== draftEl.value.trim()) {
+              setRoleStatus(root, i, '草稿已修改，请重新规范化', 'err');
+            }
+          });
+        }
+        if (normalizeBtn) {
+          normalizeBtn.addEventListener('click', async () => {
+            const draft = draftEl ? draftEl.value.trim() : '';
+            if (!draft) {
+              toast('请先填写任务内容草稿', 'err');
+              draftEl?.focus();
+              return;
+            }
+            normalizeBtn.disabled = true;
+            normalizeBtn.innerHTML = '<span class="spinner"></span> 规范化中…';
+            setRoleStatus(root, i, '正在调用默认模型整理职责包…');
+            try {
+              const result = await window.api.workflow.normalizeDuty({
+                draft,
+                code: `A0${i}`,
+                alias: ROLE_ALIASES[i - 1],
+                type: typeEl ? typeEl.value : 'worker',
+              });
+              setRoleDuty(root, i, result.dutyPackage, draft, result.attempts > 1 ? 'AI 规范化（已重试）' : 'AI 规范化');
+              if (editor) editor.hidden = true;
+              if (preview) preview.hidden = false;
+              toast('职责包已生成，请确认后再创建', 'ok');
+            } catch (err) {
+              setRoleStatus(root, i, `规范化失败：${err.message || err}`, 'err');
+              if (editor) editor.hidden = false;
+              if (preview) preview.hidden = true;
+              if (!hidden || !hidden.value) {
+                fillDutyFields(root, `role${i}`, { summary: draft });
+              }
+              showError(err, 'AI 规范化失败，可改用手动填写');
+            } finally {
+              normalizeBtn.disabled = false;
+              normalizeBtn.innerHTML = `${icon('spark')} AI 规范化`;
+            }
+          });
+        }
+        if (manualBtn) {
+          manualBtn.addEventListener('click', () => {
+            const existing = hidden && hidden.value ? safeParseJson(hidden.value) : null;
+            if (!existing) {
+              const draft = draftEl ? draftEl.value.trim() : '';
+              fillDutyFields(root, `role${i}`, { summary: draft });
+            }
+            if (editor) editor.hidden = false;
+            if (preview) preview.hidden = true;
+            setRoleStatus(root, i, '手动填写：完成标准/升级条件/禁止事项每行一条');
+            const first = root.querySelector(`[name="role${i}Name"]`);
+            first?.focus();
+          });
+        }
+        if (cancelBtn) {
+          cancelBtn.addEventListener('click', () => {
+            if (editor) editor.hidden = true;
+            if (hidden && hidden.value && preview) preview.hidden = false;
+            setRoleStatus(root, i, hidden && hidden.value ? '职责包已保留' : '草稿需要规范化后才能上岗', hidden && hidden.value ? 'ok' : '');
+          });
+        }
+        if (applyBtn) {
+          applyBtn.addEventListener('click', async () => {
+            const draft = draftEl ? draftEl.value.trim() : '';
+            const fields = readDutyFields(root, `role${i}`);
+            applyBtn.disabled = true;
+            try {
+              const result = await window.api.workflow.validateDuty({
+                ...fields,
+                draft,
+                code: `A0${i}`,
+                alias: ROLE_ALIASES[i - 1],
+                type: typeEl ? typeEl.value : 'worker',
+              });
+              setRoleDuty(root, i, result.dutyPackage, draft, '手动填写');
+              if (editor) editor.hidden = true;
+              if (preview) preview.hidden = false;
+              toast('职责包已通过校验', 'ok');
+            } catch (err) {
+              setRoleStatus(root, i, `校验未通过：${err.message || err}`, 'err');
+              showError(err, '职责包校验未通过');
+            } finally {
+              applyBtn.disabled = false;
+            }
+          });
+        }
+
+        const pre = fromTemplate && fromTemplate.customRoles ? fromTemplate.customRoles[i - 1] : null;
+        if (pre && pre.dutyPackage) {
+          const draft = pre.draft || pre.dutyPackage.summary || '';
+          if (draftEl) draftEl.value = draft;
+          setRoleDuty(root, i, pre.dutyPackage, draft, '来自模板');
+        }
+      }
+      const submit = () => {
+        submitCustomWorkflow(form, close, root);
+      };
+      $('#customWfCreate', root).addEventListener('click', submit);
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        submit();
+      });
+    },
+  });
+}
+
+async function submitCustomWorkflow(form, close, modalRoot) {
+  if (!form) return;
+  const fd = new FormData(form);
+  const name = String(fd.get('name') || '').trim();
+  const rootPath = String(fd.get('root') || '').trim();
+  if (!name) {
+    toast('请填写工作流名称', 'err');
+    return;
+  }
+  if (!rootPath) {
+    toast('请选择独立根目录', 'err');
+    return;
+  }
+  const customRoles = [];
+  for (let i = 1; i <= 3; i += 1) {
+    const draft = String(fd.get(`roleDraft${i}`) || '').trim();
+    const hidden = form.querySelector(`[name="roleDuty${i}"]`);
+    const dutyPackage = hidden && hidden.value ? safeParseJson(hidden.value) : null;
+    if (!draft && !dutyPackage) continue;
+    if (!dutyPackage) {
+      toast(`角色${i}的草稿还没规范化。请点「AI 规范化」或「手动填写」并采用职责包`, 'err', 5200);
+      const editor = form.querySelector(`[data-role-editor="${i}"]`);
+      if (editor) editor.hidden = false;
+      setRoleStatus(form, i, '草稿尚未规范化，不能创建', 'err');
+      return;
+    }
+    if (hidden.dataset.draft !== draft) {
+      toast(`角色${i}的草稿改过但没重新规范化，请重新规范化或把草稿改回`, 'err', 5200);
+      setRoleStatus(form, i, '草稿与职责包不一致，请重新规范化', 'err');
+      return;
+    }
+    customRoles.push({
+      type: String(fd.get(`roleType${i}`) || 'worker'),
+      draft,
+      dutyPackage,
+    });
+  }
+  const techReview = Boolean(form.querySelector('[name="techReview"]')?.checked);
+  const advisorReview = Boolean(form.querySelector('[name="advisorReview"]')?.checked);
+  const btn = $('#customWfCreate', modalRoot);
+  const progress = $('#customWfProgress', modalRoot);
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<span class="spinner"></span> 创建中…`;
+  }
+  if (progress) progress.textContent = '正在生成目录、协议和角色卡…';
+  try {
+    const result = await window.api.workflow.createCustom({
+      name,
+      root: rootPath,
+      techReview,
+      advisorReview,
+      customRoles,
+    });
+    S.customWorkflows = result.customWorkflows || [];
+    S.workflow = result;
+    S.settings.workflowRoot = result.root;
+    if (!S.settings.defaultWorkspace && result.projectRoot) S.settings.defaultWorkspace = result.projectRoot;
+    S.workflowTab = 'overview';
+    close();
+    updateWorkflowAlert();
+    renderTopbar();
+    renderWorkflowView();
+    toast(`自定义工作流「${name}」已创建：${(result.stations || []).length} 个工位`, 'ok', 5200);
+  } catch (err) {
+    showError(err, '创建自定义工作流失败');
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = `${icon('check')} 创建`;
+    }
+    if (progress) progress.textContent = '';
+  }
+}
+
+async function switchCustomWorkflow(id) {
+  try {
+    const state = await window.api.workflow.switchCustom(id);
+    S.workflow = state;
+    S.customWorkflows = state.customWorkflows || S.customWorkflows;
+    S.settings.workflowRoot = state.root;
+    renderTopbar();
+    renderWorkflowView();
+    toast(`已切换到「${state.custom ? state.custom.name : state.root}」`, 'ok', 3000);
+  } catch (err) {
+    showError(err, '切换自定义工作流失败');
+  }
+}
+
+async function switchStandardWorkflow() {
+  try {
+    const state = await window.api.workflow.switchStandard();
+    S.workflow = state;
+    S.settings.workflowRoot = state.root;
+    renderTopbar();
+    renderWorkflowView();
+    toast('已切回标准 8 工位（模板只读）', 'ok', 3000);
+  } catch (err) {
+    showError(err, '切回标准工作流失败');
+  }
+}
+
+async function importWorkflowTemplate() {
+  try {
+    const result = await window.api.workflow.importTemplate();
+    if (!result || result.canceled) return;
+    const list = Array.isArray(S.customWorkflows) ? S.customWorkflows : [];
+    if (list.length >= 2) {
+      toast('自定义工作流最多两套，请先移除其中一套再导入', 'err', 4800);
+      return;
+    }
+    openCustomWorkflowModal(result.template);
+  } catch (err) {
+    showError(err, '导入模板失败');
+  }
+}
+
+async function exportWorkflowTemplate(id) {
+  try {
+    const result = await window.api.workflow.exportTemplate(id);
+    if (!result || result.canceled) return;
+    toast(`模板已导出：${result.path}`, 'ok', 6000);
+  } catch (err) {
+    showError(err, '导出模板失败');
+  }
+}
+
+function dutyDiffHtml(before, after) {
+  return `<div class="duty-diff-grid">
+    <div><b>当前职责包</b><pre>${esc(before)}</pre></div>
+    <div><b>改写后</b><pre>${esc(after)}</pre></div>
+  </div>`;
+}
+
+function openDutyEditorModal(code) {
+  const w = S.workflow;
+  if (!w || !w.isCustom) return;
+  const role = (w.custom && Array.isArray(w.custom.customRoles) ? w.custom.customRoles : [])
+    .find((r) => r.code === code);
+  if (!role) {
+    toast(`找不到自定义角色：${code}`, 'err');
+    return;
+  }
+  const station = (w.stations || []).find((s) => s.num === code) || {};
+  const alias = station.alias || role.name || code;
+  const type = role.type || 'worker';
+  const current = role.dutyPackage && typeof role.dutyPackage === 'object' ? role.dutyPackage : null;
+  const currentText = current ? dutySummaryText(current) : '（旧版没有职责包，保存后会补齐）';
+  const draft = role.draft || '';
+  let validated = null;
+
+  showModal({
+    title: `编辑职责 · ${code} ${alias}`,
+    subtitle: '只改「职责契约」层；固定骨架与路由不变。写盘前自动备份 .bak。',
+    wide: true,
+    body: `<form id="dutyEditForm">
+      <div class="field">
+        <label>任务内容草稿（补充说明层，可改）</label>
+        <textarea class="textarea" name="dutyDraft" rows="2" placeholder="这个角色长期负责什么">${esc(draft)}</textarea>
+      </div>
+      <div class="inline" style="margin:8px 0;flex-wrap:wrap">
+        <button type="button" class="btn small" id="dutyNormalizeBtn">${icon('spark')} AI 重新规范化</button>
+        <span class="status-text" id="dutyEditStatus">改完先「校验并预览」，确认后再写盘</span>
+      </div>
+      <div class="divider"></div>
+      ${dutyFieldsHtml('dutyEdit', current || { summary: draft })}
+      <div id="dutyEditDiff"></div>
+    </form>`,
+    footer: `<button class="btn" data-modal-close>取消</button>
+      <button class="btn" id="dutyPreviewBtn">校验并预览</button>
+      <button class="btn primary" id="dutySaveBtn" disabled>确认写盘</button>`,
+    onMount: (root, close) => {
+      const form = $('#dutyEditForm', root);
+      const draftEl = form.querySelector('[name="dutyDraft"]');
+      const status = $('#dutyEditStatus', root);
+      const diffBox = $('#dutyEditDiff', root);
+      const saveBtn = $('#dutySaveBtn', root);
+      const normalizeBtn = $('#dutyNormalizeBtn', root);
+      const setStatus = (text, kind = '') => {
+        status.textContent = text;
+        status.className = `status-text${kind ? ` ${kind}` : ''}`;
+      };
+      const invalidate = () => {
+        validated = null;
+        diffBox.innerHTML = '';
+        saveBtn.disabled = true;
+      };
+      form.addEventListener('input', invalidate);
+
+      const showPreview = (pkg) => {
+        validated = pkg;
+        diffBox.innerHTML = dutyDiffHtml(currentText, dutySummaryText(pkg));
+        saveBtn.disabled = false;
+        setStatus('已校验；确认下方 diff 后写盘', 'ok');
+      };
+
+      normalizeBtn.addEventListener('click', async () => {
+        const text = draftEl.value.trim();
+        if (!text) {
+          toast('请先填写任务内容草稿', 'err');
+          draftEl.focus();
+          return;
+        }
+        normalizeBtn.disabled = true;
+        normalizeBtn.innerHTML = '<span class="spinner"></span> 规范化中…';
+        setStatus('正在调用默认模型重新整理职责包…');
+        try {
+          const result = await window.api.workflow.normalizeDuty({
+            draft: text,
+            code,
+            alias,
+            type,
+          });
+          fillDutyFields(root, 'dutyEdit', result.dutyPackage);
+          showPreview(result.dutyPackage);
+        } catch (err) {
+          setStatus(`规范化失败：${err.message || err}`, 'err');
+          showError(err, 'AI 规范化失败，可手动修改');
+        } finally {
+          normalizeBtn.disabled = false;
+          normalizeBtn.innerHTML = `${icon('spark')} AI 重新规范化`;
+        }
+      });
+
+      $('#dutyPreviewBtn', root).addEventListener('click', async (e) => {
+        e.preventDefault();
+        const btn = e.currentTarget;
+        btn.disabled = true;
+        try {
+          const result = await window.api.workflow.validateDuty({
+            ...readDutyFields(root, 'dutyEdit'),
+            draft: draftEl.value.trim(),
+            code,
+            alias,
+            type,
+          });
+          showPreview(result.dutyPackage);
+        } catch (err) {
+          invalidate();
+          setStatus(`校验未通过：${err.message || err}`, 'err');
+          showError(err, '职责包校验未通过');
+        } finally {
+          btn.disabled = false;
+        }
+      });
+
+      saveBtn.addEventListener('click', async () => {
+        if (!validated) return;
+        saveBtn.disabled = true;
+        saveBtn.innerHTML = '<span class="spinner"></span> 写盘中…';
+        try {
+          const state = await window.api.workflow.updateRoleDuty({
+            root: w.root,
+            code,
+            draft: draftEl.value.trim(),
+            dutyPackage: validated,
+          });
+          S.workflow = state;
+          S.customWorkflows = state.customWorkflows || S.customWorkflows;
+          close();
+          updateWorkflowAlert();
+          renderTopbar();
+          renderWorkflowView();
+          toast(`已更新 ${code} 的职责契约（原文件已备份 .bak）`, 'ok', 4200);
+        } catch (err) {
+          saveBtn.disabled = false;
+          saveBtn.innerHTML = '确认写盘';
+          showError(err, '写盘失败');
+        }
+      });
+    },
+  });
+}
+
+async function removeCustomWorkflow(id) {
+  const item = (S.customWorkflows || []).find((entry) => entry.id === id);
+  const ok = await confirmAction({
+    title: '移除自定义工作流',
+    message: `从工作台移除「${item ? item.name : id}」？`,
+    detail: '只移除登记，不删除目录和文件；目录可以之后手工清理。',
+    confirmText: '移除',
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    const state = await window.api.workflow.removeCustom(id);
+    S.workflow = state;
+    S.customWorkflows = state.customWorkflows || [];
+    S.settings.workflowRoot = state.root;
+    renderTopbar();
+    renderWorkflowView();
+    toast('已从工作台移除（目录保留）', 'ok', 3000);
+  } catch (err) {
+    showError(err, '移除自定义工作流失败');
+  }
 }
 
 function commandCard(id, ic, title, desc) {
@@ -424,6 +1282,7 @@ async function runInstall(form) {
     });
     S.workflow = result;
     S.settings.workflowRoot = result.root;
+    if (!result.custom) S.settings.standardRoot = result.root;
     if (!S.settings.defaultWorkspace && result.projectRoot) S.settings.defaultWorkspace = result.projectRoot;
     try {
       S.mcpServers = await window.api.mcp.list();
@@ -677,6 +1536,13 @@ async function onWorkflowClick(e) {
   const simple = e.target.closest('[data-wf]');
   if (!simple) return;
   const action = simple.dataset.wf;
+  if (action === 'custom-new') { openCustomWorkflowModal(); return; }
+  if (action === 'import-template') { await importWorkflowTemplate(); return; }
+  if (action === 'export-template') { await exportWorkflowTemplate(simple.dataset.id); return; }
+  if (action === 'switch-standard') { await switchStandardWorkflow(); return; }
+  if (action === 'edit-duty') { openDutyEditorModal(simple.dataset.code); return; }
+  if (action === 'custom-switch') { await switchCustomWorkflow(simple.dataset.id); return; }
+  if (action === 'custom-remove') { await removeCustomWorkflow(simple.dataset.id); return; }
   if (action === 'refresh') { await refreshWorkflowState(true); return; }
   if (action === 'open-root') { await openLocalPath(S.workflow.root); return; }
   if (action === 'open-terminal') { await openLocalPath(`${S.workflow.projectRoot}\\00_人类总控\\汇报终端`); return; }
@@ -1102,6 +1968,7 @@ async function repairInstall() {
     S.workflowBusy = true;
     const result = await window.api.workflow.install({
       root: w.root,
+      repair: true,
       project: w.project || 'P001_第一个项目',
       projectTitle: w.profile ? w.profile.title : '',
       codeRoot: w.profile ? w.profile.code_root : '',
@@ -1110,6 +1977,7 @@ async function repairInstall() {
     });
     S.workflow = result;
     S.workflowBusy = false;
+    if (!result.custom) S.settings.standardRoot = w.root;
     toast('补齐完成', 'ok');
     await refreshWorkflowState();
   } catch (err) {

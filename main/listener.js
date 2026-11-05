@@ -53,6 +53,27 @@ function sleep(ms, signal) {
 }
 
 /**
+ * 心跳由监听程序写，不消耗模型调用。
+ * 只处理形如 `.../<工位>/收件箱` 的目录，写到工位根目录 `_HEARTBEAT.md`。
+ */
+function writeHeartbeats(folders, note) {
+  const stamp = new Date().toISOString();
+  for (const folder of folders || []) {
+    if (path.basename(String(folder)) !== '收件箱') continue;
+    const file = path.join(path.dirname(String(folder)), '_HEARTBEAT.md');
+    try {
+      const prev = fs.existsSync(file)
+        ? fs.readFileSync(file, 'utf8').split(/\r?\n/).map((s) => s.trim()).filter(Boolean).slice(-4)
+        : [];
+      prev.push(`- ${stamp} ${note}`);
+      fs.writeFileSync(file, `${prev.join('\n')}\n`, 'utf8');
+    } catch {
+      /* 心跳失败不影响监听 */
+    }
+  }
+}
+
+/**
  * 原生文件监听：不依赖 Python / MCP，用于工作台自己的循环监听兜底。
  * 语义与 file_watcher_mcp.py 保持一致：先扫积压，再轮询等待新文件。
  */
@@ -82,20 +103,45 @@ async function waitForFiles({ folders, timeoutSeconds = 300, settleSeconds = 1, 
   }
 }
 
-function buildPrompt(file, folders) {
-  return [
+function globalStatusPath(folders) {
+  for (const folder of folders || []) {
+    if (path.basename(String(folder)) !== '收件箱') continue;
+    const station = path.dirname(String(folder));
+    const project = path.dirname(station);
+    return path.join(project, '01_总控', '发件箱', '_GLOBAL_STATUS.md');
+  }
+  return '';
+}
+
+function buildPrompt(file, folders, { first = false } = {}) {
+  const status = globalStatusPath(folders);
+  const lines = [
     '【自动监听】收件箱发现待处理文件：',
     file,
     '',
     '监听目录：',
     ...folders.map((f) => `- ${f}`),
     '',
-    '请按《00_协议总纲.md》第 4 节处理这一个文件：',
-    '1. 只读取这个文件；',
-    '2. 按前缀路由，把产出写到协议要求的目录；',
-    '3. 处理完把源文件移出收件箱，归档到本工位「已处理」；',
-    '4. 用一句话汇报结果即可。不要调用 wait_for_files 等待下一个文件——工作台会自动继续监听。',
-  ].join('\n');
+  ];
+  if (first) {
+    lines.push(
+      '这是本对话第一次处理文件：先读一次《00_协议总纲.md》第 4 节，记住路由与归档规则；之后不要重复通读协议。'
+    );
+  } else {
+    lines.push('协议规则已在本对话上下文中，本轮不要重读《00_协议总纲.md》，只读下面两项：');
+  }
+  lines.push(
+    status ? `1. 全局状态：${status}（PAUSED 则停手）` : '1. 全局状态：{PROJECT_ROOT}\\01_总控\\发件箱\\_GLOBAL_STATUS.md（PAUSED 则停手）',
+    '2. 当前文件（只读这一个）',
+    '',
+    '处理要求：',
+    '- 按前缀路由，把产出写到协议要求的目录；',
+    '- 处理完把源文件移出收件箱，归档到本工位「已处理」；',
+    '- 用一句话汇报结果即可；',
+    '- 心跳由工作台监听程序写，不需要你写 `_HEARTBEAT.md`；',
+    '- 不要调用 wait_for_files 等待下一个文件——工作台会自动继续监听。'
+  );
+  return lines.join('\n');
 }
 
 function publicState(loop) {
@@ -107,6 +153,8 @@ function publicState(loop) {
     startedAt: loop.startedAt,
     lastFile: loop.lastFile,
     lastError: loop.lastError,
+    lastHeartbeatAt: loop.lastHeartbeatAt || 0,
+    configuring: Boolean(loop.configuring),
     useMcp: loop.useMcp,
   };
 }
@@ -116,6 +164,31 @@ class WorkflowListener {
     this.agent = agent;
     this.mcp = mcp;
     this.loops = new Map();
+    this.configuring = false;
+  }
+
+  setConfiguring(flag) {
+    this.configuring = Boolean(flag);
+    for (const loop of this.loops.values()) {
+      loop.configuring = this.configuring;
+      if (this.configuring) {
+        loop.status = 'configuring';
+        this.emitLoop(loop, 'loop_status');
+      }
+    }
+  }
+
+  async pauseWhileConfiguring(loop) {
+    if (!this.configuring) {
+      loop.configuring = false;
+      return;
+    }
+    loop.configuring = true;
+    while (this.configuring && !loop.stopped) {
+      if (loop.status !== 'configuring') this.setStatus(loop, 'configuring');
+      await sleep(500, loop.signal);
+    }
+    loop.configuring = false;
   }
 
   get(conversationId) {
@@ -232,7 +305,10 @@ class WorkflowListener {
   async run(loop) {
     let errors = 0;
     while (!loop.stopped) {
+      await this.pauseWhileConfiguring(loop);
+      if (loop.stopped) break;
       this.setStatus(loop, 'waiting');
+      this.touchHeartbeat(loop, '等待文件');
       let result;
       try {
         result = await this.waitForFile(loop);
@@ -245,7 +321,10 @@ class WorkflowListener {
       }
       if (loop.stopped || result === null) break;
       const text = String(result || '').trim();
-      if (!text || text === 'NO_FILE') continue;
+      if (!text || text === 'NO_FILE') {
+        this.touchHeartbeat(loop, '无文件');
+        continue;
+      }
       const match = /^(BACKLOG|NEW):\s*(.+)$/.exec(text);
       if (!match) {
         errors += 1;
@@ -260,12 +339,16 @@ class WorkflowListener {
       }
       errors = 0;
       const file = match[2].trim();
+      await this.pauseWhileConfiguring(loop);
+      if (loop.stopped) break;
+      const firstFile = loop.rounds === 0;
       loop.rounds += 1;
       loop.lastFile = file;
       this.setStatus(loop, 'processing');
+      this.touchHeartbeat(loop, `处理 ${path.basename(file)}`);
       this.emitLoop(loop, 'loop_file', { file });
       try {
-        const res = await this.agent.send(loop.conversationId, buildPrompt(file, loop.folders), loop.emit);
+        const res = await this.agent.send(loop.conversationId, buildPrompt(file, loop.folders, { first: firstFile }), loop.emit);
         if (!res.ok) {
           loop.lastError = res.failure || '';
           if (res.failure === '已取消' || loop.stopped) break;
@@ -282,6 +365,11 @@ class WorkflowListener {
       }
     }
     loop.reason = loop.reason || (loop.stopped ? 'stopped' : 'error');
+  }
+
+  touchHeartbeat(loop, note) {
+    loop.lastHeartbeatAt = Date.now();
+    writeHeartbeats(loop.folders, note);
   }
 
   stop(conversationId) {

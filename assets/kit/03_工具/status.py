@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-协同流水线状态检查 —— 随时运行，看七个工位是否活着。
+协同流水线状态检查 —— 随时运行，看每个工位是否活着。
 
 用法:
   python tools\\status.py
@@ -9,28 +9,18 @@
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 import time
 from pathlib import Path
 
+from _workflow_config import load_stations
+
 CONTROL_ROOT = Path(__file__).resolve().parent.parent
 POINTER = CONTROL_ROOT / "_ACTIVE_PROJECT.md"
 
-STATIONS = [
-    ("01-总控", "01_总控", ["收件箱", "来自实施层"]),
-    ("02-实施布置", "02_实施布置", ["收件箱", "成果接收"]),
-    ("03-高级代码", "03_高级代码", ["收件箱"]),
-    ("04-代码员工", "04_代码员工", ["收件箱"]),
-    ("05-Debug", "05_Debug", ["收件箱"]),
-    ("06-美工", "06_美工", ["收件箱"]),
-    ("07-部署", "07_部署", ["收件箱"]),
-    ("08-智囊", "08_智囊", ["收件箱"]),
-]
-
 # 这些子目录的写入 = 该工位真的干了活（收件箱不算，别人也会往里写）
 ACTIVITY_DIRS = ["已处理", "代码产出", "美工产出", "测试报告", "成果移交",
-                 "技术决策库", "部署报告", "发件箱"]
+                 "技术决策库", "部署报告", "发件箱", "产出"]
 
 
 def parse_pointer() -> tuple[str, Path]:
@@ -103,12 +93,18 @@ def main() -> int:
     print("-" * 46)
 
     alerts = []
-    for label, folder, inboxes in STATIONS:
+    stations = load_stations(CONTROL_ROOT)
+    print(f"工位：{len(stations)} 个（{'自定义' if len(stations) != 8 else '标准/自定义'}拓扑）\n")
+    for st in stations:
+        label = st["label"]
+        folder = st["folder"]
+        inboxes = st["inboxes"]
         base = root / folder
         inbox_paths = [base / i for i in inboxes]
         backlog = sum(count_files(p) for p in inbox_paths)
 
-        act_paths = [base / d for d in ACTIVITY_DIRS]
+        activity = st.get("activity") or ACTIVITY_DIRS
+        act_paths = [base / d for d in activity]
         ready = base / "_READY.md"
         if ready.exists():
             act_paths.append(ready)

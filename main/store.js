@@ -8,6 +8,7 @@ const { ensureDir, readTextSafe, writeTextAtomic, pathExists, safeJsonParse } = 
 const DEFAULT_SETTINGS = {
   version: 1,
   workflowRoot: '',
+  standardRoot: '',
   defaultWorkspace: '',
   theme: 'light',
   rememberKeys: false,
@@ -19,6 +20,7 @@ const DEFAULT_SETTINGS = {
   customProviders: [],
   mcpServers: [],
   mcpAutoApprove: true,
+  customWorkflows: [],
   lastConversationId: '',
   windowBounds: null,
 };
@@ -139,6 +141,7 @@ class Store {
   saveSettings(patch = {}) {
     const allowed = [
       'workflowRoot',
+      'standardRoot',
       'defaultWorkspace',
       'theme',
       'rememberKeys',
@@ -148,6 +151,7 @@ class Store {
       'defaultModel',
       'mcpServers',
       'mcpAutoApprove',
+      'customWorkflows',
       'lastConversationId',
       'windowBounds',
     ];
